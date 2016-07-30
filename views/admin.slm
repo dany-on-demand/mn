@@ -1,0 +1,45 @@
+/ layout: header
+doctype html
+html
+    head
+        title Admin area        
+        link rel="stylesheet" type="text/css" href="app.css"
+        javascript:
+            function submitForm(exit_on_submit) {
+                let form = new FormData(document.querySelector('form'))
+                let result = {}
+                let values = form.values()
+                let keys = form.keys()
+                let key
+
+                while (!(key = keys.next()).done) {
+                    result[key.value] = values.next().value
+                }
+
+                let json_result = JSON.stringify(result)
+                var request = new XMLHttpRequest()
+                request.open("POST", "/settings-inbox")
+                request.setRequestHeader('Content-Type', 'application/json; charset=UTF-8')
+                request.send(json_result)
+
+                if (exit_on_submit) {
+                    request.onloadend = function () {
+                        window.location = "/"
+                    }
+                }
+            }
+    body
+        main.container
+            h1 express_server_settings
+            form style="width: 320px; margin: 64px auto; position: relative;"
+                - for key in this.express_server_settings
+                    fieldset
+                        legend = key
+                        textarea.full-width name=key ==this.express_server_settings[key]
+            div style="position: relative; max-width: 540px; margin: auto;"
+                button.button-alternative onclick="submitForm(true)" style="position:absolute; top: calc( 0.5rem - 35px ); right: -2rem;"
+                    | save &amp; exit
+                    span.arrow ❯
+                button.button-alternative onclick="submitForm(false)" style="position:absolute; top: calc( 0.5rem - 35px ); left: 2rem;"
+                    | submit
+                    span.arrow ❯

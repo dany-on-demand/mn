@@ -1,0 +1,24 @@
+{
+  "name": "mn",
+  "version": "1.0.0",
+  "description": "",
+  "main": "server.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "dany-on-demand",
+  "license": "MIT",
+  "dependencies": {
+    "body-parser": "^1.15.2",
+    "bufferutil": "^1.2.1",
+    "compression": "^1.6.2",
+    "express": "^4.14.0",
+    "express-session": "^1.14.0",
+    "send": "^0.14.1",
+    "session-file-store": "^0.2.0",
+    "slm": "^0.5.1",
+    "utf-8-validate": "^1.2.1",
+    "uuid": "^2.0.2",
+    "ws": "^1.1.1"
+  }
+}

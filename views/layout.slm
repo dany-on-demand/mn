@@ -1,0 +1,13 @@
+/ layout: header
+doctype html
+title ${this.title || "movie night"}
+
+link rel="stylesheet" type="text/css" href="app.css"
+script type="text/javascript" src="funstuff.js"
+script type="text/javascript" src="app.js"
+body
+    canvas.background-funstuff
+    main.container.container-medium-75vw
+        .row = content()
+    footer.container.container-medium-75vw
+        center: p Unauthorised use under penalty of excommunication 

@@ -1,0 +1,36 @@
+/ layout: header
+doctype html
+title Login
+link rel="stylesheet" type="text/css" href="app.css"
+javascript:
+    function submitForm() {
+        let form = new FormData(document.querySelector('form'))
+        let result = {}
+        let values = form.values()
+        let keys = form.keys()
+        let key
+
+        while (!(key = keys.next()).done) {
+            result[key.value] = values.next().value
+        }
+
+        let json_result = JSON.stringify(result)
+        var request = new XMLHttpRequest()
+        request.open("POST", window.location)
+        request.setRequestHeader('Content-Type', 'application/json; charset=UTF-8')
+        request.send(json_result)
+        request.onload = function() {
+            if (request.status === 200)
+                window.location = "/"
+        }
+    }
+body: main: .container
+    h1 login
+    form style="width: 320px; margin: 64px auto; position: relative;"
+        fieldset
+            legend password
+            input type="text" name="password"
+    div style="position: relative; max-width: 540px; margin: auto;"
+        button.button-alternative onclick="submitForm(this)" style="position:absolute; top: calc( 0.5rem - 35px ); left: 2rem;"
+            | submit
+            span.arrow ❯

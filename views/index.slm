@@ -1,0 +1,36 @@
+= extend('layout')
+.column: .container.center: img src="banner.png"
+- if (this.authorised)
+    nav: ul: li: a href="/${this.admin_link}" admin
+    javascript:
+        function initAdmin() {
+            let video = document.querySelector('video')
+            video.addEventListener("timeupdate", function () {
+                page.ws.send(JSON.stringify(
+                    {
+                    "type": "admin-seek-time-update",
+                    message: {
+                        "video-seek-time": video.currentTime
+                        // @Todo: auth
+                    }
+                }))
+            })
+        }
+        document.addEventListener('DOMContentLoaded', initAdmin)
+.column.app-main-content
+    .video-container.column.column-large-7-12
+        .video-controls.play-pause-container
+            .pause: svg[xmlns:xlink="http://www.w3.org/1999/xlink" height="100%" version="1.1" viewBox="0 0 36 64"]: path[fill="white" d="M 12,54 16,54 16,10 12,10 z M 21,54 25,54 25,10 21,10 z"]
+            .play: svg[xmlns:xlink="http://www.w3.org/1999/xlink" height="100%" version="1.1" viewBox="0 0 36 64"]: path[fill="white" d="M 12,54 36,32 12,10 z"]
+        button.video-controls.fullscreen fullscreen
+        video src="/stream"
+    .chat.column.column-large-5-12
+        .chat-box.row: span.motd
+        .chat-input.row
+            input type="text" name="chat" placeholder="Type..." style=( () => {if (!this.loggedIn) return 'display:none'}())            
+            input type="text" name="name" placeholder="Pick a name" style=( () => {if (this.loggedIn) return 'display:none'}()) 
+            button.chat-button send
+.info-message-container
+    span.info-message
+    button.close-button
+.column: .container.center: img src="footer.png"

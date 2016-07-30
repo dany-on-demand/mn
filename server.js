@@ -30,7 +30,7 @@ express_server.active_channel = new Channel()
 
 express_server.use(compression())
 express_server.use(session({
-    store: new sessionFileStore(),
+    // store: new sessionFileStore(),
     secret: uuid.v4(),
     resave: false,
     saveUninitialized: true

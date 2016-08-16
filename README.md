@@ -1,5 +1,5 @@
 ![](public/footer.png)
-# 🎥mn🎥
+# mn
 **website that syncs &lt;video> stream + anonymous chat**
 
 > akin to a self-hosted [cytube](https://cytu.be) or [rabb.it](https://rabb.it) 🔎 pull requests welcome
@@ -9,7 +9,7 @@
     * runs on default port [3016](https://oeis.org/search?q=3016)
     * websockets on port 8080
   * on production hide behind [nginx](https://github.com/dany-on-demand/mn/wiki)
-  * 🎥mn🎥 assumes the file you want to stream is stored in /media
+  * mn assumes the file you want to stream is stored in /media
   * login route, admin password and admin page route are printed to the console on startup, write them down
   * changing media_file will reload the video for everyone
 

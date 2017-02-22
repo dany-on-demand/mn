@@ -4,7 +4,7 @@ title Login
 link rel="stylesheet" type="text/css" href="app.css"
 javascript:
     function submitForm() {
-        let form = new FormData(document.querySelector('form'))
+        let form = new FormData(document.querySelector("form"))
         let result = {}
         let values = form.values()
         let keys = form.keys()
@@ -17,7 +17,7 @@ javascript:
         let json_result = JSON.stringify(result)
         var request = new XMLHttpRequest()
         request.open("POST", window.location)
-        request.setRequestHeader('Content-Type', 'application/json; charset=UTF-8')
+        request.setRequestHeader("Content-Type", "application/json; charset=UTF-8")
         request.send(json_result)
         request.onload = function() {
             if (request.status === 200)

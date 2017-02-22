@@ -1,10 +1,10 @@
-= extend('layout')
+= extend("layout")
 .column: .container.center: img src="banner.png"
 - if (this.authorised)
     nav: ul: li: a href="/${this.admin_link}" admin
     javascript:
         function initAdmin() {
-            let video = document.querySelector('video')
+            let video = document.querySelector("video")
             video.addEventListener("timeupdate", function () {
                 page.ws.send(JSON.stringify(
                     {
@@ -16,7 +16,7 @@
                 }))
             })
         }
-        document.addEventListener('DOMContentLoaded', initAdmin)
+        document.addEventListener("DOMContentLoaded", initAdmin)
 .column.app-main-content
     .video-container.column.column-large-7-12
         .video-controls.play-pause-container

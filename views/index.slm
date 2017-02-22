@@ -27,8 +27,8 @@
     .chat.column.column-large-5-12
         .chat-box.row: span.motd
         .chat-input.row
-            input type="text" name="chat" placeholder="Type..." style=( () => {if (!this.loggedIn) return 'display:none'}())            
-            input type="text" name="name" placeholder="Pick a name" style=( () => {if (this.loggedIn) return 'display:none'}()) 
+            input type="text" name="chat" placeholder="Type..." style=( !this.loggedIn ? 'display:none': '' )            
+            input type="text" name="name" placeholder="Pick a name" style=( this.loggedIn ? 'display:none': '' ) 
             button.chat-button send
 .info-message-container
     span.info-message

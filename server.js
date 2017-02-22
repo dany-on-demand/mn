@@ -17,7 +17,14 @@ let adm_login_route = uuid.v4()
 let adm_route = uuid.v4()
 let adm_pass = uuid.v4()
 
-console.dir({ login_route: adm_login_route, route: adm_route, password: adm_pass })
+console.log("Go to the generated route (ie localhost:3016/{route}) and enter the password")
+console.log(
+`
+route: \x1b[38;2;255;206;67m ${adm_route} \x1b[0m
+password: ${adm_pass}
+
+login route: ${adm_login_route}
+`          )
 
 // @Todo: formalise property and variable names to thisKindOfCase 
 express_server.globals = require("./config/globals.json")

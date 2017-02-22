@@ -4,6 +4,10 @@
   "description": "",
   "main": "server.js",
   "author": "dany-on-demand",
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/dany-on-demand/mn"
+  },
   "license": "MIT",
   "dependencies": {
     "body-parser": "^1.15.2",

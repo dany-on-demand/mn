@@ -29,6 +29,11 @@ login route: ${adm_login_route}
 // @Todo: formalise property and variable names to thisKindOfCase 
 express_server.globals = require("./config/globals.json")
 
+if (!fs.existsSync(path.join(__dirname, "media", express_server.globals.media_file)))
+{
+    console.log("\x1b[38;2;255;67;206mWarning: media file specified does not exist, add it to /media \x1b[0m")
+}
+
 function Channel() {
     this["server-launch-time"] = new Date().toJSON()
     this.currentTime = 0

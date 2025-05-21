@@ -24,5 +24,8 @@
   },
   "optionalDependencies": {
     "bufferutil": "^1.3.0"
+  },
+  "engines": {
+    "node": ">=22.16.0"
   }
 }

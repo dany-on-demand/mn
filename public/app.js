@@ -25,6 +25,31 @@ function $(sel) { return document.querySelector(sel) }
 function show(el) { el?.classList.remove('hidden') }
 function hide(el) { el?.classList.add('hidden') }
 
+function formatTime(secs) {
+  const s = Math.floor(secs || 0)
+  const h = Math.floor(s / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  const sec = s % 60
+  return h > 0
+    ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
+    : `${m}:${String(sec).padStart(2, '0')}`
+}
+
+function updateProgress() {
+  const video = $('video')
+  const fill  = $('#video-progress-fill')
+  const label = $('#video-progress-time')
+  if (!video || !fill) return
+  const dur = video.duration
+  if (dur && dur > 0) {
+    fill.style.width = `${(video.currentTime / dur * 100).toFixed(2)}%`
+    if (label) label.textContent = `${formatTime(video.currentTime)} / ${formatTime(dur)}`
+  } else {
+    fill.style.width = '0%'
+    if (label) label.textContent = formatTime(video.currentTime)
+  }
+}
+
 async function initCsrf() {
   const res = await fetch('/api/csrf-token')
   const data = await res.json().catch(() => null)
@@ -178,6 +203,21 @@ function initVideo() {
     else if (video.webkitRequestFullScreen) video.webkitRequestFullScreen()
   })
 
+  // Progress bar: update every timeupdate (fires ~4×/s during playback)
+  video.addEventListener('timeupdate', updateProgress)
+  video.addEventListener('loadedmetadata', updateProgress)
+
+  // Admin: click on progress bar to seek
+  $('#video-progress')?.addEventListener('click', (e) => {
+    if (state.user?.role !== 'admin') return
+    e.stopPropagation()
+    const bar = e.currentTarget
+    const ratio = e.offsetX / bar.offsetWidth
+    if (!video.duration) return
+    video.currentTime = ratio * video.duration
+    // The timeupdate event will broadcast the new seek time via the existing throttled handler
+  })
+
   // Admin: broadcast seek time updates, throttled to ≤1/s
   let lastTimeupdateSent = 0
   video.addEventListener('timeupdate', () => {
@@ -306,13 +346,19 @@ function updateNavBar() {
     show(navUser)
     navUser.textContent = state.user.username
     show(btnLogout)
-    if (state.user.role === 'admin') show(btnAdmin)
-    else hide(btnAdmin)
+    if (state.user.role === 'admin') {
+      show(btnAdmin)
+      $('#video-progress')?.classList.add('admin-seekable')
+    } else {
+      hide(btnAdmin)
+      $('#video-progress')?.classList.remove('admin-seekable')
+    }
   } else {
     show(btnLogin)
     hide(navUser)
     hide(btnLogout)
     hide(btnAdmin)
+    $('#video-progress')?.classList.remove('admin-seekable')
   }
 }
 

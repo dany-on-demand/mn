@@ -601,3 +601,38 @@ button.fullscreen {
 .footer-center {
   text-align: center;
 }
+
+/* Video progress bar — always visible below the video */
+.video-progress {
+  position: relative;
+  height: 5px;
+  background: rgba(0,0,0,0.15);
+  cursor: default;
+  margin-top: 3px;
+}
+
+/* Admins get a taller, clickable seek bar */
+.video-progress.admin-seekable {
+  height: 9px;
+  cursor: pointer;
+}
+
+.video-progress-fill {
+  height: 100%;
+  background: #00C5CD;
+  width: 0%;
+  transition: width 0.5s linear;
+}
+
+/* Floating time label, top-right of the bar */
+.video-progress-time {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 3px);
+  font-size: 0.7rem;
+  color: white;
+  background: rgba(0,0,0,0.6);
+  padding: 0.1rem 0.3rem;
+  pointer-events: none;
+  white-space: nowrap;
+}

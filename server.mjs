@@ -132,10 +132,12 @@ function invalidateSettings() {
 // ---------------------------------------------------------------------------
 // Media path cache — path.join + settings lookup done once, not per request
 // Also validates that the resolved path stays within MEDIA_DIR (path traversal guard).
+// mediaFileExists is checked once here so the hot /stream path needs no syscall.
 // ---------------------------------------------------------------------------
 const MEDIA_DIR = path.join(__dirname, 'media')
 let cachedMediaFile = null
 let cachedMediaPath = null
+let mediaFileExists = false
 
 function rebuildMediaCache() {
   const file = getSettings().media_file || 'test.mp4'
@@ -145,10 +147,11 @@ function rebuildMediaCache() {
     console.warn(`[security] media_file "${file}" escapes media directory — ignoring`)
     cachedMediaFile = 'test.mp4'
     cachedMediaPath = path.join(MEDIA_DIR, 'test.mp4')
-    return
+  } else {
+    cachedMediaFile = file
+    cachedMediaPath = resolved
   }
-  cachedMediaFile = file
-  cachedMediaPath = resolved
+  mediaFileExists = fs.existsSync(cachedMediaPath)
 }
 
 // ---------------------------------------------------------------------------
@@ -374,6 +377,9 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
   if (!username || !password) {
     return res.status(400).json({ error: 'Username and password are required' })
   }
+  if (username.length > 64) {
+    return res.status(400).json({ error: 'Invalid credentials' })
+  }
 
   const user = stmts.getUserByUsername.get(username)
   if (!user) return res.status(401).json({ error: 'Invalid credentials' })
@@ -485,10 +491,10 @@ app.delete('/api/users/:id', requireAdmin, apiWriteLimiter, (req, res) => {
 // ---------------------------------------------------------------------------
 // API – Media file list (admin only) — lets the admin pick from existing files
 // ---------------------------------------------------------------------------
-app.get('/api/media', requireAdmin, apiReadLimiter, (_req, res) => {
+app.get('/api/media', requireAdmin, apiReadLimiter, async (_req, res) => {
   try {
-    const files = fs.readdirSync(MEDIA_DIR).filter(f => !f.startsWith('.'))
-    res.json(files)
+    const files = await fs.promises.readdir(MEDIA_DIR)
+    res.json(files.filter(f => !f.startsWith('.')))
   } catch {
     res.json([])
   }
@@ -498,16 +504,28 @@ app.get('/api/media', requireAdmin, apiReadLimiter, (_req, res) => {
 // Stream endpoint – media path served from cache, no DB round-trip per request
 // ---------------------------------------------------------------------------
 app.use('/stream', streamLimiter, (req, res) => {
-  if (!fs.existsSync(cachedMediaPath)) {
+  if (!mediaFileExists) {
     return res.status(404).send('Media file not found. Add it to the /media directory.')
   }
   send(req, cachedMediaFile, { root: MEDIA_DIR }).pipe(res)
 })
 
 // ---------------------------------------------------------------------------
-// Static files
+// Static files — rate-limited; Cache-Control avoids redundant re-fetches.
+// HTML is never cached (no-cache) so deploys take effect immediately.
+// CSS/JS/images are cached for 1 day; they change rarely.
 // ---------------------------------------------------------------------------
-app.use(express.static(path.join(__dirname, 'public')))
+app.use(staticLimiter, express.static(path.join(__dirname, 'public'), {
+  etag: true,
+  lastModified: true,
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-cache')
+    } else {
+      res.setHeader('Cache-Control', 'public, max-age=86400')
+    }
+  }
+}))
 
 // SPA fallback – serve index.html for any unmatched GET
 app.get('*', staticLimiter, (_req, res) => {
@@ -651,7 +669,7 @@ getSettings()
 rebuildMediaCache()
 rebuildWelcomePrefix()
 
-if (!fs.existsSync(cachedMediaPath)) {
+if (!mediaFileExists) {
   console.warn(`\x1b[33mWarning: media file "${cachedMediaFile}" not found in /media\x1b[0m`)
 }
 

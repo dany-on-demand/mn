@@ -38,7 +38,7 @@
     <nav id="navbar" class="row navbar">
       <img src="/banner.png" alt="Movie Night" class="banner" />
       <div class="nav-actions">
-        <span id="ws-status" class="ws-dot ws-dot--offline" title="Connecting…"></span>
+        <span id="ws-status" class="ws-dot ws-dot--connecting" title="Connecting…"></span>
         <button id="btn-login" class="button-alternative hidden">login <span class="arrow">❯</span></button>
         <span id="nav-user" class="nav-user hidden"></span>
         <button id="btn-admin" class="button-alternative hidden">admin <span class="arrow">❯</span></button>
@@ -63,6 +63,10 @@
         </div>
         <button class="video-controls fullscreen">fullscreen</button>
         <video src="/stream" preload="metadata"></video>
+        <div class="video-progress" id="video-progress" role="progressbar" aria-label="Video progress">
+          <div class="video-progress-fill" id="video-progress-fill"></div>
+          <span class="video-progress-time" id="video-progress-time">0:00</span>
+        </div>
       </div>
 
       <div class="chat column column-large-5-12">
@@ -71,7 +75,7 @@
         </div>
         <div class="chat-input row">
           <input id="chat-name-input" type="text" name="name" placeholder="Pick a name…" />
-          <input id="chat-msg-input" type="text" name="chat" placeholder="Type a message…" style="display:none" />
+          <input id="chat-msg-input" type="text" name="chat" placeholder="Type a message…" class="hidden" />
           <button class="chat-button" id="chat-send-btn">send</button>
         </div>
       </div>

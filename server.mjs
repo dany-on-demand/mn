@@ -211,6 +211,13 @@ const streamLimiter = rateLimit({
   message: 'Too many requests, please try again later'
 })
 
+const staticLimiter = rateLimit({
+  windowMs: 60 * 1000,        // 1 minute
+  max: 300,                   // max 300 static file requests per minute
+  standardHeaders: true,
+  legacyHeaders: false
+})
+
 app.use(compression())
 app.use(sessionParser)
 app.use(express.json())
@@ -403,7 +410,7 @@ app.use('/stream', streamLimiter, (req, res) => {
 app.use(express.static(path.join(__dirname, 'public')))
 
 // SPA fallback – serve index.html for any unmatched GET
-app.get('*', (_req, res) => {
+app.get('*', staticLimiter, (_req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'))
 })
 

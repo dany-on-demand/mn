@@ -24,7 +24,10 @@ function hide(el) { el?.classList.add('hidden') }
 
 async function apiFetch(path, options = {}) {
   const res = await fetch(path, {
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Requested-With': 'XMLHttpRequest'
+    },
     ...options
   })
   const data = await res.json().catch(() => null)

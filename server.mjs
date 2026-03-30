@@ -11,6 +11,7 @@ import compression from 'compression'
 import send from 'send'
 import Database from 'better-sqlite3'
 import { WebSocketServer } from 'ws'
+import { rateLimit } from 'express-rate-limit'
 
 const scryptAsync = promisify(scrypt)
 
@@ -23,6 +24,7 @@ const __dirname = path.dirname(__filename)
 const SESSION_CLEANUP_INTERVAL_MS = 15 * 60 * 1000   // 15 minutes
 const MAX_CHAT_MESSAGE_LENGTH = 500
 const MAX_CHAT_USERNAME_LENGTH = 64
+const IS_PRODUCTION = process.env.NODE_ENV === 'production'
 
 // ---------------------------------------------------------------------------
 // Data directory & SQLite database
@@ -170,14 +172,41 @@ const sessionParser = session({
   saveUninitialized: false,
   cookie: {
     httpOnly: true,
-    sameSite: 'lax',
+    sameSite: 'strict',
+    secure: IS_PRODUCTION,  // HTTPS-only in production
     maxAge: 7 * 24 * 60 * 60 * 1000 // 1 week
   }
+})
+
+// Rate limiters
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,  // 15 minutes
+  max: 20,                    // max 20 requests per window
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please try again later' }
+})
+
+const apiWriteLimiter = rateLimit({
+  windowMs: 60 * 1000,        // 1 minute
+  max: 60,                    // max 60 write requests per minute
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please try again later' }
 })
 
 app.use(compression())
 app.use(sessionParser)
 app.use(express.json())
+
+// CSRF protection: require X-Requested-With header on all state-changing requests
+app.use((req, res, next) => {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next()
+  if (req.headers['x-requested-with'] !== 'XMLHttpRequest') {
+    return res.status(403).json({ error: 'CSRF check failed' })
+  }
+  next()
+})
 
 // ---------------------------------------------------------------------------
 // Auth helpers
@@ -204,7 +233,7 @@ app.get('/api/auth/me', (req, res) => {
   }
 })
 
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', authLimiter, async (req, res) => {
   const { username, password } = req.body || {}
   if (!username || !password) {
     return res.status(400).json({ error: 'Username and password are required' })
@@ -225,7 +254,7 @@ app.post('/api/auth/logout', requireAuth, (req, res) => {
   req.session.destroy(() => res.json({ ok: true }))
 })
 
-app.post('/api/auth/change-password', requireAuth, async (req, res) => {
+app.post('/api/auth/change-password', requireAuth, authLimiter, async (req, res) => {
   const { currentPassword, newPassword } = req.body || {}
   if (!currentPassword || !newPassword) {
     return res.status(400).json({ error: 'currentPassword and newPassword are required' })
@@ -253,7 +282,7 @@ app.get('/api/settings', requireAdmin, (_req, res) => {
   res.json(Object.fromEntries(rows.map(r => [r.key, r.value])))
 })
 
-app.post('/api/settings', requireAdmin, (req, res) => {
+app.post('/api/settings', requireAdmin, apiWriteLimiter, (req, res) => {
   const incoming = req.body || {}
   const upsert = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)')
 
@@ -281,7 +310,7 @@ app.get('/api/users', requireAdmin, (_req, res) => {
   res.json(users)
 })
 
-app.post('/api/users', requireAdmin, async (req, res) => {
+app.post('/api/users', requireAdmin, apiWriteLimiter, async (req, res) => {
   const { username, password, role = 'user' } = req.body || {}
   if (!username || !password) {
     return res.status(400).json({ error: 'username and password are required' })
@@ -302,7 +331,7 @@ app.post('/api/users', requireAdmin, async (req, res) => {
   }
 })
 
-app.delete('/api/users/:id', requireAdmin, (req, res) => {
+app.delete('/api/users/:id', requireAdmin, apiWriteLimiter, (req, res) => {
   const id = parseInt(req.params.id, 10)
   if (id === req.session.user.id) {
     return res.status(400).json({ error: 'Cannot delete your own account' })

@@ -1,27 +1,34 @@
 import { createServer } from 'node:http'
 import { scrypt, randomBytes, timingSafeEqual } from 'node:crypto'
+import { gzipSync } from 'node:zlib'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import fs from 'node:fs'
 
-import express from 'express'
-import session from 'express-session'
-import compression from 'compression'
-import send from 'send'
 import Database from 'better-sqlite3'
 import { WebSocketServer } from 'ws'
-import { rateLimit } from 'express-rate-limit'
+import send from 'send'
 
 const __filename = fileURLToPath(import.meta.url)
-const __dirname = path.dirname(__filename)
+const __dirname  = path.dirname(__filename)
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-const SESSION_CLEANUP_INTERVAL_MS = 15 * 60 * 1000   // 15 minutes
-const MAX_CHAT_MESSAGE_LENGTH = 500
-const MAX_CHAT_USERNAME_LENGTH = 64
-const IS_PRODUCTION = process.env.NODE_ENV === 'production'
+const SESSION_CLEANUP_INTERVAL_MS = 15 * 60 * 1000
+const SESSION_MAX_AGE_S            = 7 * 24 * 60 * 60   // 1 week
+const SESSION_COOKIE               = 'mn.sid'
+const MAX_CHAT_MESSAGE_LENGTH      = 500
+const MAX_CHAT_USERNAME_LENGTH     = 64
+const IS_PRODUCTION                = process.env.NODE_ENV === 'production'
+const STATIC_DIR                   = path.join(__dirname, 'public')
+
+// Rate limit policies: [maxRequests, windowMs]
+const RL_AUTH   = [20,  15 * 60 * 1000]  // login / password change
+const RL_READ   = [120, 60_000]           // admin reads
+const RL_WRITE  = [60,  60_000]           // admin writes
+const RL_STREAM = [30,  60_000]           // video byte-range requests
+const RL_STATIC = [300, 60_000]           // static assets
 
 // ---------------------------------------------------------------------------
 // Data directory & SQLite database
@@ -32,8 +39,8 @@ if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true })
 const db = new Database(path.join(DATA_DIR, 'mn.db'))
 db.pragma('journal_mode = WAL')
 db.pragma('foreign_keys = ON')
-db.pragma('synchronous = NORMAL')    // safe with WAL, ~2× faster writes
-db.pragma('cache_size = -16000')     // 16 MB page cache
+db.pragma('synchronous = NORMAL')   // safe with WAL, ~2× faster writes
+db.pragma('cache_size = -16000')    // 16 MB page cache
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
@@ -62,29 +69,29 @@ db.exec(`
 `)
 
 // ---------------------------------------------------------------------------
-// Pre-compile ALL prepared statements (data-oriented: compile once, run many)
+// Pre-compiled prepared statements — compile once, run many
 // ---------------------------------------------------------------------------
 const stmts = {
   // app_config
-  getConfigValue:         db.prepare('SELECT value FROM app_config WHERE key = ?'),
-  insertConfigValue:      db.prepare('INSERT INTO app_config (key, value) VALUES (?, ?)'),
+  getConfigValue:        db.prepare('SELECT value FROM app_config WHERE key = ?'),
+  insertConfigValue:     db.prepare('INSERT INTO app_config (key, value) VALUES (?, ?)'),
   // settings
-  insertIgnoreSetting:    db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)'),
-  upsertSetting:          db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)'),
-  getAllSettings:          db.prepare('SELECT key, value FROM settings'),
+  insertIgnoreSetting:   db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)'),
+  upsertSetting:         db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)'),
+  getAllSettings:        db.prepare('SELECT key, value FROM settings'),
   // users
-  getUserByUsername:      db.prepare('SELECT * FROM users WHERE username = ?'),
-  getUserById:            db.prepare('SELECT * FROM users WHERE id = ?'),
-  getAdmin:               db.prepare("SELECT id FROM users WHERE role = 'admin' LIMIT 1"),
-  insertUser:             db.prepare('INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)'),
-  updatePassword:         db.prepare('UPDATE users SET password_hash = ? WHERE id = ?'),
-  deleteUser:             db.prepare('DELETE FROM users WHERE id = ?'),
-  listUsers:              db.prepare('SELECT id, username, role, created_at FROM users'),
+  getUserByUsername:     db.prepare('SELECT * FROM users WHERE username = ?'),
+  getUserById:           db.prepare('SELECT * FROM users WHERE id = ?'),
+  getAdmin:              db.prepare("SELECT id FROM users WHERE role = 'admin' LIMIT 1"),
+  insertUser:            db.prepare('INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)'),
+  updatePassword:        db.prepare('UPDATE users SET password_hash = ? WHERE id = ?'),
+  deleteUser:            db.prepare('DELETE FROM users WHERE id = ?'),
+  listUsers:             db.prepare('SELECT id, username, role, created_at FROM users'),
   // sessions
-  getSession:             db.prepare('SELECT sess FROM sessions WHERE sid = ? AND expire > ?'),
-  upsertSession:          db.prepare('INSERT OR REPLACE INTO sessions (sid, sess, expire) VALUES (?, ?, ?)'),
-  deleteSession:          db.prepare('DELETE FROM sessions WHERE sid = ?'),
-  deleteExpiredSessions:  db.prepare('DELETE FROM sessions WHERE expire < ?'),
+  getSession:            db.prepare('SELECT sess FROM sessions WHERE sid = ? AND expire > ?'),
+  upsertSession:         db.prepare('INSERT OR REPLACE INTO sessions (sid, sess, expire) VALUES (?, ?, ?)'),
+  deleteSession:         db.prepare('DELETE FROM sessions WHERE sid = ?'),
+  deleteExpiredSessions: db.prepare('DELETE FROM sessions WHERE expire < ?'),
 }
 
 // ---------------------------------------------------------------------------
@@ -100,8 +107,9 @@ for (const [key, value] of Object.entries(defaultSettings)) {
 }
 
 // ---------------------------------------------------------------------------
-// Persistent session secret
-// Env var SESSION_SECRET takes priority; otherwise generate+persist in DB.
+// Persistent session secret — stored in DB so it survives restarts.
+// Not used for cookie signing yet (128-bit random IDs are sufficient),
+// but kept for future HMAC hardening.
 // ---------------------------------------------------------------------------
 let sessionSecret = process.env.SESSION_SECRET || stmts.getConfigValue.get('session_secret')?.value
 if (!sessionSecret) {
@@ -110,15 +118,13 @@ if (!sessionSecret) {
 }
 
 // ---------------------------------------------------------------------------
-// In-memory settings cache — avoids a DB round-trip on every WS connection
-// and every /stream request.  Invalidated whenever settings are written.
+// Settings cache — avoids a DB round-trip on every heartbeat / stream request
 // ---------------------------------------------------------------------------
 let settingsCache = null
 
 function getSettings() {
   if (!settingsCache) {
-    const rows = stmts.getAllSettings.all()
-    settingsCache = Object.fromEntries(rows.map(r => [r.key, r.value]))
+    settingsCache = Object.fromEntries(stmts.getAllSettings.all().map(r => [r.key, r.value]))
   }
   return settingsCache
 }
@@ -130,9 +136,7 @@ function invalidateSettings() {
 }
 
 // ---------------------------------------------------------------------------
-// Media path cache — path.join + settings lookup done once, not per request
-// Also validates that the resolved path stays within MEDIA_DIR (path traversal guard).
-// mediaFileExists is checked once here so the hot /stream path needs no syscall.
+// Media path cache — eliminates path.join + existsSync on every /stream req
 // ---------------------------------------------------------------------------
 const MEDIA_DIR = path.join(__dirname, 'media')
 let cachedMediaFile = null
@@ -140,9 +144,8 @@ let cachedMediaPath = null
 let mediaFileExists = false
 
 function rebuildMediaCache() {
-  const file = getSettings().media_file || 'test.mp4'
+  const file     = getSettings().media_file || 'test.mp4'
   const resolved = path.resolve(MEDIA_DIR, file)
-  // Reject any path that escapes MEDIA_DIR (e.g. ../data/mn.db)
   if (!resolved.startsWith(MEDIA_DIR + path.sep)) {
     console.warn(`[security] media_file "${file}" escapes media directory — ignoring`)
     cachedMediaFile = 'test.mp4'
@@ -155,7 +158,7 @@ function rebuildMediaCache() {
 }
 
 // ---------------------------------------------------------------------------
-// Password helpers – inline callbacks avoid the promisify allocation
+// Password helpers — inline callbacks avoid promisify allocation
 // ---------------------------------------------------------------------------
 function hashPassword(password) {
   return new Promise((resolve, reject) => {
@@ -170,7 +173,7 @@ function hashPassword(password) {
 function verifyPassword(password, storedHash) {
   return new Promise((resolve, reject) => {
     const [saltHex, hashHex] = storedHash.split(':')
-    const salt = Buffer.from(saltHex, 'hex')
+    const salt   = Buffer.from(saltHex, 'hex')
     const stored = Buffer.from(hashHex, 'hex')
     scrypt(password, salt, 64, (err, hash) => {
       if (err) return reject(err)
@@ -183,15 +186,10 @@ function verifyPassword(password, storedHash) {
 // Ensure at least one admin account exists
 // ---------------------------------------------------------------------------
 async function ensureAdmin() {
-  const existing = stmts.getAdmin.get()
-  if (existing) return
-
+  if (stmts.getAdmin.get()) return
   const adminUser = process.env.ADMIN_USERNAME || 'admin'
   const adminPass = process.env.ADMIN_PASSWORD || randomBytes(8).toString('hex')
-  const passwordHash = await hashPassword(adminPass)
-
-  stmts.insertUser.run(adminUser, passwordHash, 'admin')
-
+  stmts.insertUser.run(adminUser, await hashPassword(adminPass), 'admin')
   console.log('\n\x1b[33m┌─ Admin account created ────────────────────────┐\x1b[0m')
   console.log(`\x1b[33m│\x1b[0m  Username : \x1b[32m${adminUser}\x1b[0m`)
   console.log(`\x1b[33m│\x1b[0m  Password : \x1b[32m${adminPass}\x1b[0m`)
@@ -200,445 +198,411 @@ async function ensureAdmin() {
 }
 
 // ---------------------------------------------------------------------------
-// Simple SQLite session store – uses pre-compiled stmts, no per-call prepare
+// Session management — replaces express-session (no npm package needed)
 // ---------------------------------------------------------------------------
-class SQLiteSessionStore extends session.Store {
-  constructor() {
-    super()
-    // Prune expired sessions every 15 minutes
-    setInterval(() => {
-      stmts.deleteExpiredSessions.run(Math.floor(Date.now() / 1000))
-    }, SESSION_CLEANUP_INTERVAL_MS).unref()
-  }
+setInterval(() => stmts.deleteExpiredSessions.run(Math.floor(Date.now() / 1000)), SESSION_CLEANUP_INTERVAL_MS).unref()
 
-  get(sid, cb) {
+function parseCookies(req) {
+  const out = {}
+  for (const part of (req.headers.cookie || '').split(';')) {
+    const idx = part.indexOf('=')
+    if (idx < 1) continue
+    const k = part.slice(0, idx).trim()
+    try { out[k] = decodeURIComponent(part.slice(idx + 1).trim()) } catch { out[k] = part.slice(idx + 1).trim() }
+  }
+  return out
+}
+
+async function loadSession(req) {
+  const sid = parseCookies(req)[SESSION_COOKIE]
+  if (sid) {
     const row = stmts.getSession.get(sid, Math.floor(Date.now() / 1000))
-    if (!row) return cb(null, null)
-    try { cb(null, JSON.parse(row.sess)) } catch (e) { cb(e) }
+    if (row) {
+      try {
+        req.sessionId   = sid
+        req.session     = JSON.parse(row.sess)
+        req.sessionIsNew = false
+        return
+      } catch {}
+    }
   }
+  req.sessionId   = randomBytes(16).toString('hex')
+  req.session     = {}
+  req.sessionIsNew = true
+}
 
-  set(sid, sess, cb) {
-    // sess.cookie.maxAge is in milliseconds; convert to seconds for the Unix timestamp
-    const maxAgeMs = sess.cookie?.maxAge || (7 * 24 * 60 * 60 * 1000)
-    const expire = Math.floor(Date.now() / 1000) + Math.floor(maxAgeMs / 1000)
-    stmts.upsertSession.run(sid, JSON.stringify(sess), expire)
-    cb(null)
-  }
-
-  destroy(sid, cb) {
-    stmts.deleteSession.run(sid)
-    cb(null)
+function saveSession(req, res) {
+  if (!req.sessionId) return
+  stmts.upsertSession.run(req.sessionId, JSON.stringify(req.session), Math.floor(Date.now() / 1000) + SESSION_MAX_AGE_S)
+  if (req.sessionIsNew) {
+    const secure = IS_PRODUCTION ? '; Secure' : ''
+    res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${req.sessionId}; HttpOnly; SameSite=Strict${secure}; Max-Age=${SESSION_MAX_AGE_S}; Path=/`)
+    req.sessionIsNew = false
   }
 }
 
-// ---------------------------------------------------------------------------
-// Express setup
-// ---------------------------------------------------------------------------
-const app = express()
-const httpServer = createServer(app)
+function destroySession(req, res) {
+  if (req.sessionId) stmts.deleteSession.run(req.sessionId)
+  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; HttpOnly; Max-Age=0; Path=/`)
+  req.session  = {}
+  req.sessionId = null
+}
 
-const sessionParser = session({
-  store: new SQLiteSessionStore(),
-  secret: sessionSecret,
-  resave: false,
-  saveUninitialized: false,
-  cookie: {
-    httpOnly: true,
-    sameSite: 'strict',
-    secure: IS_PRODUCTION,  // HTTPS-only in production
-    maxAge: 7 * 24 * 60 * 60 * 1000 // 1 week
+// ---------------------------------------------------------------------------
+// Rate limiting — in-memory sliding window, replaces express-rate-limit
+// ---------------------------------------------------------------------------
+const rlStore = new Map()
+setInterval(() => {
+  const now = Date.now()
+  for (const [k, v] of rlStore) if (now > v.resetAt) rlStore.delete(k)
+}, 60_000).unref()
+
+function getIp(req) {
+  // Trust X-Forwarded-For only in production (behind a reverse proxy)
+  if (IS_PRODUCTION) {
+    const fwd = req.headers['x-forwarded-for']
+    if (fwd) return fwd.split(',')[0].trim()
   }
-})
+  return req.socket.remoteAddress || 'unknown'
+}
 
-// Rate limiters
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,  // 15 minutes
-  max: 20,                    // max 20 requests per window
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Too many requests, please try again later' }
-})
+// Returns true if this request is over the limit (should be rejected)
+function rateLimited(req, [maxReqs, windowMs]) {
+  const key = `${getIp(req)}:${maxReqs}:${windowMs}`
+  const now = Date.now()
+  let e = rlStore.get(key)
+  if (!e || now > e.resetAt) { rlStore.set(key, { count: 1, resetAt: now + windowMs }); return false }
+  return ++e.count > maxReqs
+}
 
-const apiReadLimiter = rateLimit({
-  windowMs: 60 * 1000,        // 1 minute
-  max: 120,                   // max 120 read requests per minute
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Too many requests, please try again later' }
-})
-
-const apiWriteLimiter = rateLimit({
-  windowMs: 60 * 1000,        // 1 minute
-  max: 60,                    // max 60 write requests per minute
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Too many requests, please try again later' }
-})
-
-const streamLimiter = rateLimit({
-  windowMs: 60 * 1000,        // 1 minute
-  max: 30,                    // max 30 stream requests per minute
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: 'Too many requests, please try again later'
-})
-
-const staticLimiter = rateLimit({
-  windowMs: 60 * 1000,        // 1 minute
-  max: 300,                   // max 300 static file requests per minute
-  standardHeaders: true,
-  legacyHeaders: false
-})
-
-app.use(compression({
-  // Don't try to compress already-compressed video streams — wastes CPU
-  filter: (req, res) => req.path.startsWith('/stream') ? false : compression.filter(req, res)
-}))
-
-// Security headers on every response
-app.use((_req, res, next) => {
+// ---------------------------------------------------------------------------
+// HTTP response helpers
+// ---------------------------------------------------------------------------
+function setSecurityHeaders(res) {
   res.setHeader('X-Content-Type-Options', 'nosniff')
   res.setHeader('X-Frame-Options', 'SAMEORIGIN')
   res.setHeader('Referrer-Policy', 'same-origin')
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()')
-  if (IS_PRODUCTION) {
-    // Tell browsers to use HTTPS for 2 years once they've seen it once
-    res.setHeader('Strict-Transport-Security', 'max-age=63072000; includeSubDomains')
-  }
-  next()
-})
-
-app.use(sessionParser)
-// Body parsing scoped to /api only — /stream and static routes never need a JSON body.
-// The 16 kb cap prevents body-size DoS.
-app.use('/api', express.json({ limit: '16kb' }))
-
-// ---------------------------------------------------------------------------
-// CSRF protection – synchronizer token pattern
-// ---------------------------------------------------------------------------
-
-// Expose a CSRF token in the session (works for both authenticated and guest sessions)
-app.get('/api/csrf-token', (req, res) => {
-  if (!req.session.csrfToken) {
-    req.session.csrfToken = randomBytes(32).toString('hex')
-  }
-  res.json({ csrfToken: req.session.csrfToken })
-})
-
-function csrfProtect(req, res, next) {
-  // CSRF check only needed for state-changing methods
-  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next()
-
-  const sessionToken = req.session?.csrfToken
-  const headerToken  = req.headers['x-csrf-token']
-
-  if (!sessionToken || !headerToken || sessionToken.length !== headerToken.length) {
-    return res.status(403).json({ error: 'Invalid CSRF token' })
-  }
-  try {
-    if (!timingSafeEqual(Buffer.from(sessionToken), Buffer.from(headerToken))) {
-      return res.status(403).json({ error: 'Invalid CSRF token' })
-    }
-  } catch {
-    return res.status(403).json({ error: 'Invalid CSRF token' })
-  }
-  next()
+  if (IS_PRODUCTION) res.setHeader('Strict-Transport-Security', 'max-age=63072000; includeSubDomains')
 }
 
-app.use(csrfProtect)
-
-// ---------------------------------------------------------------------------
-// Auth helpers
-// ---------------------------------------------------------------------------
-function requireAuth(req, res, next) {
-  if (req.session?.user) return next()
-  res.status(401).json({ error: 'Unauthorised' })
-}
-
-function requireAdmin(req, res, next) {
-  if (req.session?.user?.role === 'admin') return next()
-  res.status(403).json({ error: 'Forbidden' })
-}
-
-// ---------------------------------------------------------------------------
-// API – Auth
-// ---------------------------------------------------------------------------
-app.get('/api/auth/me', (req, res) => {
-  if (req.session?.user) {
-    const { id, username, role } = req.session.user
-    res.json({ id, username, role })
+// Sends JSON — gzip compressed if client accepts it and body > 256 bytes
+function sendJson(req, res, status, data) {
+  const buf     = Buffer.from(JSON.stringify(data), 'utf8')
+  const headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }
+  if ((req.headers['accept-encoding'] || '').includes('gzip') && buf.length > 256) {
+    const gz = gzipSync(buf)
+    headers['Content-Encoding'] = 'gzip'
+    headers['Content-Length']   = gz.length
+    res.writeHead(status, headers)
+    res.end(gz)
   } else {
-    res.json(null)
+    headers['Content-Length'] = buf.length
+    res.writeHead(status, headers)
+    res.end(buf)
   }
-})
+}
 
-app.post('/api/auth/login', authLimiter, async (req, res) => {
-  const { username, password } = req.body || {}
-  if (!username || !password) {
-    return res.status(400).json({ error: 'Username and password are required' })
-  }
-  if (username.length > 64) {
-    return res.status(400).json({ error: 'Invalid credentials' })
-  }
-
-  const user = stmts.getUserByUsername.get(username)
-  if (!user) return res.status(401).json({ error: 'Invalid credentials' })
-
-  let valid = false
-  try { valid = await verifyPassword(password, user.password_hash) } catch {}
-  if (!valid) return res.status(401).json({ error: 'Invalid credentials' })
-
-  req.session.user = { id: user.id, username: user.username, role: user.role }
-  res.json({ id: user.id, username: user.username, role: user.role })
-})
-
-app.post('/api/auth/logout', requireAuth, (req, res) => {
-  req.session.destroy(() => res.json({ ok: true }))
-})
-
-app.post('/api/auth/change-password', requireAuth, authLimiter, async (req, res) => {
-  const { currentPassword, newPassword } = req.body || {}
-  if (!currentPassword || !newPassword) {
-    return res.status(400).json({ error: 'currentPassword and newPassword are required' })
-  }
-  if (newPassword.length < 8) {
-    return res.status(400).json({ error: 'New password must be at least 8 characters' })
-  }
-
-  const user = stmts.getUserById.get(req.session.user.id)
-  if (!user) return res.status(404).json({ error: 'User not found' })
-
-  const valid = await verifyPassword(currentPassword, user.password_hash)
-  if (!valid) return res.status(401).json({ error: 'Current password is incorrect' })
-
-  const newHash = await hashPassword(newPassword)
-  stmts.updatePassword.run(newHash, user.id)
-  res.json({ ok: true })
-})
-
-// ---------------------------------------------------------------------------
-// API – Settings (admin only)
-// ---------------------------------------------------------------------------
-app.get('/api/settings', requireAdmin, apiReadLimiter, (_req, res) => {
-  res.json(getSettings())
-})
-
-app.post('/api/settings', requireAdmin, apiWriteLimiter, (req, res) => {
-  const incoming = req.body || {}
-
-  // Validate media_file doesn't escape MEDIA_DIR before persisting
-  if (incoming.media_file) {
-    const resolved = path.resolve(MEDIA_DIR, incoming.media_file)
-    if (!resolved.startsWith(MEDIA_DIR + path.sep)) {
-      return res.status(400).json({ error: 'Invalid media file path' })
-    }
-  }
-
-  const oldMedia = getSettings().media_file
-  const txn = db.transaction(() => {
-    for (const [key, value] of Object.entries(incoming)) {
-      stmts.upsertSetting.run(key, String(value))
-    }
+// Reads up to 16 KB of the request body and parses it as JSON
+async function parseJsonBody(req) {
+  return new Promise((resolve) => {
+    const chunks = []
+    let size = 0
+    req.on('data', chunk => {
+      size += chunk.length
+      if (size > 16384) { req.destroy(); resolve({}) }
+      else chunks.push(chunk)
+    })
+    req.on('end',   () => { try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))) } catch { resolve({}) } })
+    req.on('error', () => resolve({}))
   })
-  txn()
-  invalidateSettings()
+}
 
-  if (incoming.media_file && incoming.media_file !== oldMedia) {
-    channel.currentTime = 0
-    broadcast({ type: 'authoritative', message: { 'server-time': new Date().toISOString(), 'video-seek-time': 0 } })
-  }
-
-  res.json({ ok: true })
-})
-
-// ---------------------------------------------------------------------------
-// API – Users (admin only)
-// ---------------------------------------------------------------------------
-app.get('/api/users', requireAdmin, apiReadLimiter, (_req, res) => {
-  res.json(stmts.listUsers.all())
-})
-
-app.post('/api/users', requireAdmin, apiWriteLimiter, async (req, res) => {
-  const { username, password, role = 'user' } = req.body || {}
-  if (!username || !password) {
-    return res.status(400).json({ error: 'username and password are required' })
-  }
-  if (!['user', 'admin'].includes(role)) {
-    return res.status(400).json({ error: 'role must be user or admin' })
-  }
-  const passwordHash = await hashPassword(password)
-  try {
-    const result = stmts.insertUser.run(username, passwordHash, role)
-    res.json({ id: result.lastInsertRowid, username, role })
-  } catch (e) {
-    if (e.code === 'SQLITE_CONSTRAINT_UNIQUE') {
-      return res.status(409).json({ error: 'Username already exists' })
-    }
-    throw e
-  }
-})
-
-app.delete('/api/users/:id', requireAdmin, apiWriteLimiter, (req, res) => {
-  const id = parseInt(req.params.id, 10)
-  if (id === req.session.user.id) {
-    return res.status(400).json({ error: 'Cannot delete your own account' })
-  }
-  const result = stmts.deleteUser.run(id)
-  if (result.changes === 0) return res.status(404).json({ error: 'User not found' })
-  res.json({ ok: true })
-})
+// Serves a file from STATIC_DIR using `send` (handles ETags, range requests,
+// MIME types). Falls back to index.html for unknown paths (SPA routing).
+function serveStatic(req, res, pathname) {
+  send(req, pathname, { root: STATIC_DIR, dotfiles: 'deny', etag: true, lastModified: true })
+    .on('headers', (res, fp) => {
+      res.setHeader('Cache-Control', fp.endsWith('.html') ? 'no-cache' : 'public, max-age=86400')
+    })
+    .on('error', (err) => {
+      if (err.status === 404) {
+        // SPA fallback — serve index.html for any unknown path
+        send(req, '/index.html', { root: STATIC_DIR })
+          .on('headers', r => r.setHeader('Cache-Control', 'no-cache'))
+          .on('error',   () => { res.writeHead(500); res.end() })
+          .pipe(res)
+      } else {
+        res.writeHead(err.status || 500); res.end()
+      }
+    })
+    .pipe(res)
+}
 
 // ---------------------------------------------------------------------------
-// API – Media file list (admin only) — lets the admin pick from existing files
+// CSRF — synchronizer token pattern
 // ---------------------------------------------------------------------------
-app.get('/api/media', requireAdmin, apiReadLimiter, async (_req, res) => {
-  try {
-    const files = await fs.promises.readdir(MEDIA_DIR)
-    res.json(files.filter(f => !f.startsWith('.')))
-  } catch {
-    res.json([])
-  }
-})
+function csrfCheck(req, res) {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return true
+  const s = req.session?.csrfToken
+  const h = req.headers['x-csrf-token']
+  if (!s || !h || s.length !== h.length) { sendJson(req, res, 403, { error: 'Invalid CSRF token' }); return false }
+  try { if (timingSafeEqual(Buffer.from(s), Buffer.from(h))) return true } catch {}
+  sendJson(req, res, 403, { error: 'Invalid CSRF token' })
+  return false
+}
 
 // ---------------------------------------------------------------------------
-// Stream endpoint – media path served from cache, no DB round-trip per request
+// Auth guards
 // ---------------------------------------------------------------------------
-app.use('/stream', streamLimiter, (req, res) => {
-  if (!mediaFileExists) {
-    return res.status(404).send('Media file not found. Add it to the /media directory.')
-  }
-  send(req, cachedMediaFile, { root: MEDIA_DIR }).pipe(res)
-})
+function requireAuth(req, res) {
+  if (req.session?.user) return true
+  sendJson(req, res, 401, { error: 'Unauthorised' })
+  return false
+}
+
+function requireAdmin(req, res) {
+  if (req.session?.user?.role === 'admin') return true
+  sendJson(req, res, 403, { error: 'Forbidden' })
+  return false
+}
 
 // ---------------------------------------------------------------------------
-// Static files — rate-limited; Cache-Control avoids redundant re-fetches.
-// HTML is never cached (no-cache) so deploys take effect immediately.
-// CSS/JS/images are cached for 1 day; they change rarely.
-// ---------------------------------------------------------------------------
-app.use(staticLimiter, express.static(path.join(__dirname, 'public'), {
-  etag: true,
-  lastModified: true,
-  setHeaders: (res, filePath) => {
-    if (filePath.endsWith('.html')) {
-      res.setHeader('Cache-Control', 'no-cache')
-    } else {
-      res.setHeader('Cache-Control', 'public, max-age=86400')
-    }
-  }
-}))
-
-// SPA fallback – serve index.html for any unmatched GET
-app.get('*', staticLimiter, (_req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'))
-})
-
-// ---------------------------------------------------------------------------
-// Channel state
+// Channel state + broadcast helpers
 // ---------------------------------------------------------------------------
 const channel = {
-  launchTime: new Date().toISOString(),
+  launchTime:  new Date().toISOString(),
   currentTime: 0
 }
 
-// ---------------------------------------------------------------------------
-// Broadcast helpers
-// ---------------------------------------------------------------------------
+// WebSocket server — declared here so broadcast can reference wss.clients
+const wss = new WebSocketServer({ noServer: true })
 
-// Heartbeat frame – built once per tick so all clients get the same pre-serialized
-// string.  Using string concat avoids JSON.stringify on the hot 1 Hz loop.
+// Heartbeat frame — built once per tick, sent as the same string to all clients
 let heartbeatFrame = ''
 function buildHeartbeatFrame() {
   heartbeatFrame = `{"type":"heartbeat","message":{"server-time":"${new Date().toISOString()}","video-seek-time":${channel.currentTime}}}`
 }
 
-// Welcome frame – prefix is cached and only rebuilt when MOTD/settings change.
-// The per-connection seek time is appended at connection time.
+// Welcome frame prefix — rebuilt only when settings change
 let welcomePrefix = ''
 function rebuildWelcomePrefix() {
-  const motd = JSON.stringify(getSettings()['message-of-the-day'] || '')
+  const motd  = JSON.stringify(getSettings()['message-of-the-day'] || '')
   welcomePrefix = `{"type":"welcome","message":{"server-launch-time":"${channel.launchTime}","message-of-the-day":${motd},"video-seek-time":`
 }
-function buildWelcomeFrame() {
-  return `${welcomePrefix}${channel.currentTime}}}`
-}
+function buildWelcomeFrame() { return `${welcomePrefix}${channel.currentTime}}}` }
 
 function broadcast(packet) {
   const data = JSON.stringify(packet)
-  for (const client of wss.clients) {
-    if (client.readyState === 1 /* OPEN */) client.send(data)
-  }
+  for (const client of wss.clients) if (client.readyState === 1) client.send(data)
 }
-
 function broadcastRaw(data) {
-  for (const client of wss.clients) {
-    if (client.readyState === 1 /* OPEN */) client.send(data)
-  }
+  for (const client of wss.clients) if (client.readyState === 1) client.send(data)
 }
 
 // ---------------------------------------------------------------------------
-// WebSocket server (shares the HTTP server – no separate port needed)
+// API routes — flat if/else, no framework needed
 // ---------------------------------------------------------------------------
-const wss = new WebSocketServer({ noServer: true })
+async function handleApi(req, res, pathname, body) {
+  if (!csrfCheck(req, res)) return
 
-// Per-IP connection tracking — cap at 5 simultaneous WS connections per IP.
-// This prevents a single client from exhausting server memory with socket floods.
+  if (req.method === 'GET' && pathname === '/api/csrf-token') {
+    if (!req.session.csrfToken) req.session.csrfToken = randomBytes(32).toString('hex')
+    saveSession(req, res)
+    return sendJson(req, res, 200, { csrfToken: req.session.csrfToken })
+  }
+
+  if (req.method === 'GET' && pathname === '/api/auth/me') {
+    const u = req.session.user
+    return sendJson(req, res, 200, u ? { id: u.id, username: u.username, role: u.role } : null)
+  }
+
+  if (req.method === 'POST' && pathname === '/api/auth/login') {
+    if (rateLimited(req, RL_AUTH)) return sendJson(req, res, 429, { error: 'Too many requests, please try again later' })
+    const { username, password } = body
+    if (!username || !password)    return sendJson(req, res, 400, { error: 'Username and password are required' })
+    if (username.length > 64)      return sendJson(req, res, 400, { error: 'Invalid credentials' })
+    const user = stmts.getUserByUsername.get(username)
+    if (!user)                     return sendJson(req, res, 401, { error: 'Invalid credentials' })
+    let valid = false
+    try { valid = await verifyPassword(password, user.password_hash) } catch {}
+    if (!valid)                    return sendJson(req, res, 401, { error: 'Invalid credentials' })
+    req.session.user = { id: user.id, username: user.username, role: user.role }
+    saveSession(req, res)
+    return sendJson(req, res, 200, req.session.user)
+  }
+
+  if (req.method === 'POST' && pathname === '/api/auth/logout') {
+    if (!requireAuth(req, res)) return
+    destroySession(req, res)
+    return sendJson(req, res, 200, { ok: true })
+  }
+
+  if (req.method === 'POST' && pathname === '/api/auth/change-password') {
+    if (!requireAuth(req, res))    return
+    if (rateLimited(req, RL_AUTH)) return sendJson(req, res, 429, { error: 'Too many requests, please try again later' })
+    const { currentPassword, newPassword } = body
+    if (!currentPassword || !newPassword) return sendJson(req, res, 400, { error: 'currentPassword and newPassword are required' })
+    if (newPassword.length < 8)           return sendJson(req, res, 400, { error: 'New password must be at least 8 characters' })
+    const user = stmts.getUserById.get(req.session.user.id)
+    if (!user) return sendJson(req, res, 404, { error: 'User not found' })
+    if (!await verifyPassword(currentPassword, user.password_hash)) return sendJson(req, res, 401, { error: 'Current password is incorrect' })
+    stmts.updatePassword.run(await hashPassword(newPassword), user.id)
+    return sendJson(req, res, 200, { ok: true })
+  }
+
+  if (req.method === 'GET' && pathname === '/api/settings') {
+    if (!requireAdmin(req, res))    return
+    if (rateLimited(req, RL_READ)) return sendJson(req, res, 429, { error: 'Too many requests, please try again later' })
+    return sendJson(req, res, 200, getSettings())
+  }
+
+  if (req.method === 'POST' && pathname === '/api/settings') {
+    if (!requireAdmin(req, res))     return
+    if (rateLimited(req, RL_WRITE)) return sendJson(req, res, 429, { error: 'Too many requests, please try again later' })
+    if (body.media_file) {
+      const resolved = path.resolve(MEDIA_DIR, body.media_file)
+      if (!resolved.startsWith(MEDIA_DIR + path.sep)) return sendJson(req, res, 400, { error: 'Invalid media file path' })
+    }
+    const oldMedia = getSettings().media_file
+    db.transaction(() => { for (const [k, v] of Object.entries(body)) stmts.upsertSetting.run(k, String(v)) })()
+    invalidateSettings()
+    if (body.media_file && body.media_file !== oldMedia) {
+      channel.currentTime = 0
+      broadcast({ type: 'authoritative', message: { 'server-time': new Date().toISOString(), 'video-seek-time': 0 } })
+    }
+    return sendJson(req, res, 200, { ok: true })
+  }
+
+  if (req.method === 'GET' && pathname === '/api/users') {
+    if (!requireAdmin(req, res))    return
+    if (rateLimited(req, RL_READ)) return sendJson(req, res, 429, { error: 'Too many requests, please try again later' })
+    return sendJson(req, res, 200, stmts.listUsers.all())
+  }
+
+  if (req.method === 'POST' && pathname === '/api/users') {
+    if (!requireAdmin(req, res))     return
+    if (rateLimited(req, RL_WRITE)) return sendJson(req, res, 429, { error: 'Too many requests, please try again later' })
+    const { username, password, role = 'user' } = body
+    if (!username || !password)               return sendJson(req, res, 400, { error: 'username and password are required' })
+    if (!['user', 'admin'].includes(role))    return sendJson(req, res, 400, { error: 'role must be user or admin' })
+    try {
+      const result = stmts.insertUser.run(username, await hashPassword(password), role)
+      return sendJson(req, res, 200, { id: result.lastInsertRowid, username, role })
+    } catch (e) {
+      if (e.code === 'SQLITE_CONSTRAINT_UNIQUE') return sendJson(req, res, 409, { error: 'Username already exists' })
+      throw e
+    }
+  }
+
+  if (req.method === 'DELETE' && pathname.startsWith('/api/users/')) {
+    if (!requireAdmin(req, res))     return
+    if (rateLimited(req, RL_WRITE)) return sendJson(req, res, 429, { error: 'Too many requests, please try again later' })
+    const id = parseInt(pathname.split('/').pop(), 10)
+    if (!id)                             return sendJson(req, res, 400, { error: 'Invalid user id' })
+    if (id === req.session.user.id)      return sendJson(req, res, 400, { error: 'Cannot delete your own account' })
+    const result = stmts.deleteUser.run(id)
+    if (result.changes === 0)            return sendJson(req, res, 404, { error: 'User not found' })
+    return sendJson(req, res, 200, { ok: true })
+  }
+
+  if (req.method === 'GET' && pathname === '/api/media') {
+    if (!requireAdmin(req, res))    return
+    if (rateLimited(req, RL_READ)) return sendJson(req, res, 429, { error: 'Too many requests, please try again later' })
+    try {
+      return sendJson(req, res, 200, (await fs.promises.readdir(MEDIA_DIR)).filter(f => !f.startsWith('.')))
+    } catch {
+      return sendJson(req, res, 200, [])
+    }
+  }
+
+  sendJson(req, res, 404, { error: 'Not found' })
+}
+
+// ---------------------------------------------------------------------------
+// HTTP server — one flat async handler, no middleware stack
+// ---------------------------------------------------------------------------
+const httpServer = createServer(async (req, res) => {
+  let pathname
+  try { pathname = new URL(req.url, 'http://x').pathname }
+  catch { res.writeHead(400); return res.end('Bad request') }
+
+  setSecurityHeaders(res)
+
+  // Video stream — rate-limited, no body parsing, no session needed
+  if (pathname === '/stream') {
+    if (rateLimited(req, RL_STREAM)) { res.writeHead(429); return res.end('Too many requests') }
+    if (!mediaFileExists) { res.writeHead(404); return res.end('Media file not found. Add it to the /media directory.') }
+    return send(req, cachedMediaFile, { root: MEDIA_DIR }).pipe(res)
+  }
+
+  // JSON API
+  if (pathname.startsWith('/api/')) {
+    let body = {}
+    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) body = await parseJsonBody(req)
+    await loadSession(req)
+    return handleApi(req, res, pathname, body)
+  }
+
+  // Static files + SPA fallback
+  if (rateLimited(req, RL_STATIC)) { res.writeHead(429); return res.end('Too many requests') }
+  serveStatic(req, res, pathname)
+})
+
+// ---------------------------------------------------------------------------
+// WebSocket server — shares the HTTP server, no separate port
+// ---------------------------------------------------------------------------
+
+// Per-IP connection cap (5) — prevents socket-flood DoS
 const wsClientsByIp = new Map()
 
-// Parse sessions on WS upgrade so we know who the user is
-httpServer.on('upgrade', (req, socket, head) => {
+httpServer.on('upgrade', async (req, socket, head) => {
   const ip = req.socket.remoteAddress || 'unknown'
   if ((wsClientsByIp.get(ip) ?? 0) >= 5) {
     socket.write('HTTP/1.1 429 Too Many Connections\r\n\r\n')
     socket.destroy()
     return
   }
-
-  sessionParser(req, {}, () => {
-    wss.handleUpgrade(req, socket, head, (ws) => {
-      ws.user = req.session?.user || null
-      wsClientsByIp.set(ip, (wsClientsByIp.get(ip) ?? 0) + 1)
-      ws.on('close', () => {
-        const n = wsClientsByIp.get(ip) ?? 1
-        if (n <= 1) wsClientsByIp.delete(ip)
-        else wsClientsByIp.set(ip, n - 1)
-      })
-      wss.emit('connection', ws, req)
+  await loadSession(req)
+  wss.handleUpgrade(req, socket, head, (ws) => {
+    ws.user = req.session?.user || null
+    wsClientsByIp.set(ip, (wsClientsByIp.get(ip) ?? 0) + 1)
+    ws.on('close', () => {
+      const n = wsClientsByIp.get(ip) ?? 1
+      if (n <= 1) wsClientsByIp.delete(ip)
+      else wsClientsByIp.set(ip, n - 1)
     })
+    wss.emit('connection', ws, req)
   })
 })
 
 wss.on('connection', (ws) => {
   ws.send(buildWelcomeFrame())
 
-  // Per-connection message rate limit — max 10 messages/s.
-  // Drops excess silently; prevents chat spam and CPU abuse.
+  // Per-connection message rate limit — max 10/s, drops excess silently
   let msgCount = 0
   const msgReset = setInterval(() => { msgCount = 0 }, 1000)
   ws.on('close', () => clearInterval(msgReset))
 
   ws.on('message', (raw) => {
-    if (++msgCount > 10) return  // rate limit exceeded — drop
+    if (++msgCount > 10) return
     let packet
     try { packet = JSON.parse(raw) } catch { return }
 
     switch (packet.type) {
       case 'admin-seek-time-update':
-        if (ws.user?.role !== 'admin') return // reject unauthenticated updates
+        if (ws.user?.role !== 'admin') return
         channel.currentTime = Number(packet.message?.['video-seek-time']) || 0
         break
 
       case 'chat-message': {
-        const msg = packet.message || {}
-        const chatText = String(msg['chat-message'] || '').trim().slice(0, MAX_CHAT_MESSAGE_LENGTH)
+        const msg       = packet.message || {}
+        const chatText  = String(msg['chat-message']        || '').trim().slice(0, MAX_CHAT_MESSAGE_LENGTH)
         const chatOwner = String(msg['chat-message-owner'] || 'Anonymous').trim().slice(0, MAX_CHAT_USERNAME_LENGTH)
         if (!chatText) return
         broadcast({
           type: 'incoming-chat-message',
-          message: {
-            'server-time': new Date().toISOString(),
-            'chat-message': chatText,
-            'chat-message-owner': chatOwner
-          }
+          message: { 'server-time': new Date().toISOString(), 'chat-message': chatText, 'chat-message-owner': chatOwner }
         })
         break
       }
@@ -646,8 +610,7 @@ wss.on('connection', (ws) => {
   })
 })
 
-// Heartbeat every second – build the frame once, send same string to all clients.
-// Skip entirely when no clients are connected to avoid pointless work.
+// Heartbeat every second — skip when no clients to avoid pointless work
 const heartbeatInterval = setInterval(() => {
   if (wss.clients.size === 0) return
   buildHeartbeatFrame()
@@ -664,7 +627,7 @@ await ensureAdmin()
 
 if (!fs.existsSync(MEDIA_DIR)) fs.mkdirSync(MEDIA_DIR, { recursive: true })
 
-// Warm the caches (settings → media path → welcome prefix) before first request
+// Warm caches before first request
 getSettings()
 rebuildMediaCache()
 rebuildWelcomePrefix()

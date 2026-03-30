@@ -16,10 +16,6 @@
   "license": "MIT",
   "dependencies": {
     "better-sqlite3": "^11.10.0",
-    "compression": "^1.7.5",
-    "express": "^4.21.2",
-    "express-rate-limit": "^8.3.1",
-    "express-session": "^1.18.1",
     "send": "^1.2.0",
     "ws": "^8.18.2"
   },

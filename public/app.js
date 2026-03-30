@@ -12,7 +12,8 @@ const state = {
   chatMode: 'pick-name', // 'pick-name' | 'chat'
   serverLaunchTime: null,
   ws: null,
-  adminView: false
+  adminView: false,
+  csrfToken: null     // synchronizer CSRF token
 }
 
 // ---------------------------------------------------------------------------
@@ -22,14 +23,20 @@ function $(sel) { return document.querySelector(sel) }
 function show(el) { el?.classList.remove('hidden') }
 function hide(el) { el?.classList.add('hidden') }
 
+async function initCsrf() {
+  const res = await fetch('/api/csrf-token')
+  const data = await res.json().catch(() => null)
+  state.csrfToken = data?.csrfToken || null
+}
+
 async function apiFetch(path, options = {}) {
-  const res = await fetch(path, {
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Requested-With': 'XMLHttpRequest'
-    },
-    ...options
-  })
+  const headers = {
+    'Content-Type': 'application/json',
+    'X-Requested-With': 'XMLHttpRequest'
+  }
+  if (state.csrfToken) headers['X-CSRF-Token'] = state.csrfToken
+
+  const res = await fetch(path, { headers, ...options })
   const data = await res.json().catch(() => null)
   return { ok: res.ok, status: res.status, data }
 }
@@ -418,6 +425,9 @@ function escapeHtml(str) {
 // Bootstrap
 // ---------------------------------------------------------------------------
 async function main() {
+  // Fetch CSRF token first (before any state-changing requests)
+  await initCsrf()
+
   // Check current auth state
   const { data: user } = await apiFetch('/api/auth/me')
   state.user = user || null

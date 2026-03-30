@@ -187,6 +187,14 @@ const authLimiter = rateLimit({
   message: { error: 'Too many requests, please try again later' }
 })
 
+const apiReadLimiter = rateLimit({
+  windowMs: 60 * 1000,        // 1 minute
+  max: 120,                   // max 120 read requests per minute
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please try again later' }
+})
+
 const apiWriteLimiter = rateLimit({
   windowMs: 60 * 1000,        // 1 minute
   max: 60,                    // max 60 write requests per minute
@@ -195,18 +203,51 @@ const apiWriteLimiter = rateLimit({
   message: { error: 'Too many requests, please try again later' }
 })
 
+const streamLimiter = rateLimit({
+  windowMs: 60 * 1000,        // 1 minute
+  max: 30,                    // max 30 stream requests per minute
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: 'Too many requests, please try again later'
+})
+
 app.use(compression())
 app.use(sessionParser)
 app.use(express.json())
 
-// CSRF protection: require X-Requested-With header on all state-changing requests
-app.use((req, res, next) => {
+// ---------------------------------------------------------------------------
+// CSRF protection – synchronizer token pattern
+// ---------------------------------------------------------------------------
+
+// Expose a CSRF token in the session (works for both authenticated and guest sessions)
+app.get('/api/csrf-token', (req, res) => {
+  if (!req.session.csrfToken) {
+    req.session.csrfToken = randomBytes(32).toString('hex')
+  }
+  res.json({ csrfToken: req.session.csrfToken })
+})
+
+function csrfProtect(req, res, next) {
+  // CSRF check only needed for state-changing methods
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next()
-  if (req.headers['x-requested-with'] !== 'XMLHttpRequest') {
-    return res.status(403).json({ error: 'CSRF check failed' })
+
+  const sessionToken = req.session?.csrfToken
+  const headerToken  = req.headers['x-csrf-token']
+
+  if (!sessionToken || !headerToken || sessionToken.length !== headerToken.length) {
+    return res.status(403).json({ error: 'Invalid CSRF token' })
+  }
+  try {
+    if (!timingSafeEqual(Buffer.from(sessionToken), Buffer.from(headerToken))) {
+      return res.status(403).json({ error: 'Invalid CSRF token' })
+    }
+  } catch {
+    return res.status(403).json({ error: 'Invalid CSRF token' })
   }
   next()
-})
+}
+
+app.use(csrfProtect)
 
 // ---------------------------------------------------------------------------
 // Auth helpers
@@ -277,7 +318,7 @@ app.post('/api/auth/change-password', requireAuth, authLimiter, async (req, res)
 // ---------------------------------------------------------------------------
 // API – Settings (admin only)
 // ---------------------------------------------------------------------------
-app.get('/api/settings', requireAdmin, (_req, res) => {
+app.get('/api/settings', requireAdmin, apiReadLimiter, (_req, res) => {
   const rows = db.prepare('SELECT key, value FROM settings').all()
   res.json(Object.fromEntries(rows.map(r => [r.key, r.value])))
 })
@@ -305,7 +346,7 @@ app.post('/api/settings', requireAdmin, apiWriteLimiter, (req, res) => {
 // ---------------------------------------------------------------------------
 // API – Users (admin only)
 // ---------------------------------------------------------------------------
-app.get('/api/users', requireAdmin, (_req, res) => {
+app.get('/api/users', requireAdmin, apiReadLimiter, (_req, res) => {
   const users = db.prepare('SELECT id, username, role, created_at FROM users').all()
   res.json(users)
 })
@@ -344,7 +385,7 @@ app.delete('/api/users/:id', requireAdmin, apiWriteLimiter, (req, res) => {
 // ---------------------------------------------------------------------------
 // Stream endpoint
 // ---------------------------------------------------------------------------
-app.use('/stream', (req, res) => {
+app.use('/stream', streamLimiter, (req, res) => {
   const mediaFile = db.prepare("SELECT value FROM settings WHERE key = 'media_file'").get()?.value || 'test.mp4'
   const mediaDir = path.join(__dirname, 'media')
   const mediaPath = path.join(mediaDir, mediaFile)

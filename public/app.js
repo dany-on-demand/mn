@@ -82,6 +82,9 @@ function handleWelcome(msg) {
 }
 
 function handleHeartbeat(msg) {
+  // Skip DOM updates and video sync when the tab is hidden (Page Visibility API)
+  if (document.hidden) return
+
   const serverTime = new Date(msg['server-time'])
   $('#server-time').textContent = `Server time: ${serverTime.toTimeString()}`
 
@@ -155,11 +158,14 @@ function initVideo() {
     else if (video.webkitRequestFullScreen) video.webkitRequestFullScreen()
   })
 
-  // Admin: broadcast seek time updates
+  // Admin: broadcast seek time updates, throttled to ≤1/s
+  let lastTimeupdateSent = 0
   video.addEventListener('timeupdate', () => {
-    if (state.user?.role === 'admin') {
-      wsSend({ type: 'admin-seek-time-update', message: { 'video-seek-time': video.currentTime } })
-    }
+    if (state.user?.role !== 'admin') return
+    const now = performance.now()
+    if (now - lastTimeupdateSent < 1000) return
+    lastTimeupdateSent = now
+    wsSend({ type: 'admin-seek-time-update', message: { 'video-seek-time': video.currentTime } })
   })
 }
 

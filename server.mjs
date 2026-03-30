@@ -1,9 +1,8 @@
-import { createServer } from 'http'
-import { scrypt, randomBytes, timingSafeEqual } from 'crypto'
-import { promisify } from 'util'
-import { fileURLToPath } from 'url'
-import path from 'path'
-import fs from 'fs'
+import { createServer } from 'node:http'
+import { scrypt, randomBytes, timingSafeEqual } from 'node:crypto'
+import { fileURLToPath } from 'node:url'
+import path from 'node:path'
+import fs from 'node:fs'
 
 import express from 'express'
 import session from 'express-session'
@@ -12,8 +11,6 @@ import send from 'send'
 import Database from 'better-sqlite3'
 import { WebSocketServer } from 'ws'
 import { rateLimit } from 'express-rate-limit'
-
-const scryptAsync = promisify(scrypt)
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -35,6 +32,8 @@ if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true })
 const db = new Database(path.join(DATA_DIR, 'mn.db'))
 db.pragma('journal_mode = WAL')
 db.pragma('foreign_keys = ON')
+db.pragma('synchronous = NORMAL')    // safe with WAL, ~2× faster writes
+db.pragma('cache_size = -16000')     // 16 MB page cache
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
@@ -63,6 +62,32 @@ db.exec(`
 `)
 
 // ---------------------------------------------------------------------------
+// Pre-compile ALL prepared statements (data-oriented: compile once, run many)
+// ---------------------------------------------------------------------------
+const stmts = {
+  // app_config
+  getConfigValue:         db.prepare('SELECT value FROM app_config WHERE key = ?'),
+  insertConfigValue:      db.prepare('INSERT INTO app_config (key, value) VALUES (?, ?)'),
+  // settings
+  insertIgnoreSetting:    db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)'),
+  upsertSetting:          db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)'),
+  getAllSettings:          db.prepare('SELECT key, value FROM settings'),
+  // users
+  getUserByUsername:      db.prepare('SELECT * FROM users WHERE username = ?'),
+  getUserById:            db.prepare('SELECT * FROM users WHERE id = ?'),
+  getAdmin:               db.prepare("SELECT id FROM users WHERE role = 'admin' LIMIT 1"),
+  insertUser:             db.prepare('INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)'),
+  updatePassword:         db.prepare('UPDATE users SET password_hash = ? WHERE id = ?'),
+  deleteUser:             db.prepare('DELETE FROM users WHERE id = ?'),
+  listUsers:              db.prepare('SELECT id, username, role, created_at FROM users'),
+  // sessions
+  getSession:             db.prepare('SELECT sess FROM sessions WHERE sid = ? AND expire > ?'),
+  upsertSession:          db.prepare('INSERT OR REPLACE INTO sessions (sid, sess, expire) VALUES (?, ?, ?)'),
+  deleteSession:          db.prepare('DELETE FROM sessions WHERE sid = ?'),
+  deleteExpiredSessions:  db.prepare('DELETE FROM sessions WHERE expire < ?'),
+}
+
+// ---------------------------------------------------------------------------
 // Seed default settings (migrate from config/globals.json if present)
 // ---------------------------------------------------------------------------
 const globalsPath = path.join(__dirname, 'config', 'globals.json')
@@ -70,51 +95,88 @@ const defaultSettings = fs.existsSync(globalsPath)
   ? JSON.parse(fs.readFileSync(globalsPath, 'utf8'))
   : { media_file: 'test.mp4', 'message-of-the-day': 'Welcome to movie night!' }
 
-const insertSetting = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)')
 for (const [key, value] of Object.entries(defaultSettings)) {
-  insertSetting.run(key, String(value))
+  stmts.insertIgnoreSetting.run(key, String(value))
 }
 
 // ---------------------------------------------------------------------------
 // Persistent session secret
 // ---------------------------------------------------------------------------
-let sessionSecret = db.prepare('SELECT value FROM app_config WHERE key = ?').get('session_secret')?.value
+let sessionSecret = stmts.getConfigValue.get('session_secret')?.value
 if (!sessionSecret) {
   sessionSecret = randomBytes(32).toString('hex')
-  db.prepare('INSERT INTO app_config (key, value) VALUES (?, ?)').run('session_secret', sessionSecret)
+  stmts.insertConfigValue.run('session_secret', sessionSecret)
 }
 
 // ---------------------------------------------------------------------------
-// Password helpers (Node.js built-in crypto – no native addon required)
+// In-memory settings cache — avoids a DB round-trip on every WS connection
+// and every /stream request.  Invalidated whenever settings are written.
 // ---------------------------------------------------------------------------
-async function hashPassword(password) {
-  const salt = randomBytes(16)
-  const hash = await scryptAsync(password, salt, 64)
-  return `${salt.toString('hex')}:${hash.toString('hex')}`
+let settingsCache = null
+
+function getSettings() {
+  if (!settingsCache) {
+    const rows = stmts.getAllSettings.all()
+    settingsCache = Object.fromEntries(rows.map(r => [r.key, r.value]))
+  }
+  return settingsCache
 }
 
-async function verifyPassword(password, storedHash) {
-  const [saltHex, hashHex] = storedHash.split(':')
-  const salt = Buffer.from(saltHex, 'hex')
-  const hash = await scryptAsync(password, salt, 64)
-  const stored = Buffer.from(hashHex, 'hex')
-  return timingSafeEqual(hash, stored)
+function invalidateSettings() {
+  settingsCache = null
+  rebuildMediaCache()
+  rebuildWelcomePrefix()
+}
+
+// ---------------------------------------------------------------------------
+// Media path cache — path.join + settings lookup done once, not per request
+// ---------------------------------------------------------------------------
+const MEDIA_DIR = path.join(__dirname, 'media')
+let cachedMediaFile = null
+let cachedMediaPath = null
+
+function rebuildMediaCache() {
+  cachedMediaFile = getSettings().media_file || 'test.mp4'
+  cachedMediaPath = path.join(MEDIA_DIR, cachedMediaFile)
+}
+
+// ---------------------------------------------------------------------------
+// Password helpers – inline callbacks avoid the promisify allocation
+// ---------------------------------------------------------------------------
+function hashPassword(password) {
+  return new Promise((resolve, reject) => {
+    const salt = randomBytes(16)
+    scrypt(password, salt, 64, (err, hash) => {
+      if (err) return reject(err)
+      resolve(`${salt.toString('hex')}:${hash.toString('hex')}`)
+    })
+  })
+}
+
+function verifyPassword(password, storedHash) {
+  return new Promise((resolve, reject) => {
+    const [saltHex, hashHex] = storedHash.split(':')
+    const salt = Buffer.from(saltHex, 'hex')
+    const stored = Buffer.from(hashHex, 'hex')
+    scrypt(password, salt, 64, (err, hash) => {
+      if (err) return reject(err)
+      try { resolve(timingSafeEqual(hash, stored)) } catch { resolve(false) }
+    })
+  })
 }
 
 // ---------------------------------------------------------------------------
 // Ensure at least one admin account exists
 // ---------------------------------------------------------------------------
 async function ensureAdmin() {
-  const existing = db.prepare("SELECT id FROM users WHERE role = 'admin' LIMIT 1").get()
+  const existing = stmts.getAdmin.get()
   if (existing) return
 
   const adminUser = process.env.ADMIN_USERNAME || 'admin'
   const adminPass = process.env.ADMIN_PASSWORD || randomBytes(8).toString('hex')
   const passwordHash = await hashPassword(adminPass)
 
-  db.prepare('INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)').run(
-    adminUser, passwordHash, 'admin'
-  )
+  stmts.insertUser.run(adminUser, passwordHash, 'admin')
 
   console.log('\n\x1b[33m┌─ Admin account created ────────────────────────┐\x1b[0m')
   console.log(`\x1b[33m│\x1b[0m  Username : \x1b[32m${adminUser}\x1b[0m`)
@@ -124,22 +186,19 @@ async function ensureAdmin() {
 }
 
 // ---------------------------------------------------------------------------
-// Simple SQLite session store (no extra package needed)
+// Simple SQLite session store – uses pre-compiled stmts, no per-call prepare
 // ---------------------------------------------------------------------------
 class SQLiteSessionStore extends session.Store {
-  constructor(db) {
+  constructor() {
     super()
-    this.db = db
     // Prune expired sessions every 15 minutes
     setInterval(() => {
-      const now = Math.floor(Date.now() / 1000)
-      this.db.prepare('DELETE FROM sessions WHERE expire < ?').run(now)
+      stmts.deleteExpiredSessions.run(Math.floor(Date.now() / 1000))
     }, SESSION_CLEANUP_INTERVAL_MS).unref()
   }
 
   get(sid, cb) {
-    const row = this.db.prepare('SELECT sess FROM sessions WHERE sid = ? AND expire > ?')
-      .get(sid, Math.floor(Date.now() / 1000))
+    const row = stmts.getSession.get(sid, Math.floor(Date.now() / 1000))
     if (!row) return cb(null, null)
     try { cb(null, JSON.parse(row.sess)) } catch (e) { cb(e) }
   }
@@ -148,13 +207,12 @@ class SQLiteSessionStore extends session.Store {
     // sess.cookie.maxAge is in milliseconds; convert to seconds for the Unix timestamp
     const maxAgeMs = sess.cookie?.maxAge || (7 * 24 * 60 * 60 * 1000)
     const expire = Math.floor(Date.now() / 1000) + Math.floor(maxAgeMs / 1000)
-    this.db.prepare('INSERT OR REPLACE INTO sessions (sid, sess, expire) VALUES (?, ?, ?)')
-      .run(sid, JSON.stringify(sess), expire)
+    stmts.upsertSession.run(sid, JSON.stringify(sess), expire)
     cb(null)
   }
 
   destroy(sid, cb) {
-    this.db.prepare('DELETE FROM sessions WHERE sid = ?').run(sid)
+    stmts.deleteSession.run(sid)
     cb(null)
   }
 }
@@ -166,7 +224,7 @@ const app = express()
 const httpServer = createServer(app)
 
 const sessionParser = session({
-  store: new SQLiteSessionStore(db),
+  store: new SQLiteSessionStore(),
   secret: sessionSecret,
   resave: false,
   saveUninitialized: false,
@@ -287,7 +345,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     return res.status(400).json({ error: 'Username and password are required' })
   }
 
-  const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username)
+  const user = stmts.getUserByUsername.get(username)
   if (!user) return res.status(401).json({ error: 'Invalid credentials' })
 
   let valid = false
@@ -311,14 +369,14 @@ app.post('/api/auth/change-password', requireAuth, authLimiter, async (req, res)
     return res.status(400).json({ error: 'New password must be at least 8 characters' })
   }
 
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.session.user.id)
+  const user = stmts.getUserById.get(req.session.user.id)
   if (!user) return res.status(404).json({ error: 'User not found' })
 
   const valid = await verifyPassword(currentPassword, user.password_hash)
   if (!valid) return res.status(401).json({ error: 'Current password is incorrect' })
 
   const newHash = await hashPassword(newPassword)
-  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(newHash, user.id)
+  stmts.updatePassword.run(newHash, user.id)
   res.json({ ok: true })
 })
 
@@ -326,21 +384,19 @@ app.post('/api/auth/change-password', requireAuth, authLimiter, async (req, res)
 // API – Settings (admin only)
 // ---------------------------------------------------------------------------
 app.get('/api/settings', requireAdmin, apiReadLimiter, (_req, res) => {
-  const rows = db.prepare('SELECT key, value FROM settings').all()
-  res.json(Object.fromEntries(rows.map(r => [r.key, r.value])))
+  res.json(getSettings())
 })
 
 app.post('/api/settings', requireAdmin, apiWriteLimiter, (req, res) => {
   const incoming = req.body || {}
-  const upsert = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)')
-
-  const oldMedia = db.prepare("SELECT value FROM settings WHERE key = 'media_file'").get()?.value
+  const oldMedia = getSettings().media_file
   const txn = db.transaction(() => {
     for (const [key, value] of Object.entries(incoming)) {
-      upsert.run(key, String(value))
+      stmts.upsertSetting.run(key, String(value))
     }
   })
   txn()
+  invalidateSettings()
 
   if (incoming.media_file && incoming.media_file !== oldMedia) {
     channel.currentTime = 0
@@ -354,8 +410,7 @@ app.post('/api/settings', requireAdmin, apiWriteLimiter, (req, res) => {
 // API – Users (admin only)
 // ---------------------------------------------------------------------------
 app.get('/api/users', requireAdmin, apiReadLimiter, (_req, res) => {
-  const users = db.prepare('SELECT id, username, role, created_at FROM users').all()
-  res.json(users)
+  res.json(stmts.listUsers.all())
 })
 
 app.post('/api/users', requireAdmin, apiWriteLimiter, async (req, res) => {
@@ -368,8 +423,7 @@ app.post('/api/users', requireAdmin, apiWriteLimiter, async (req, res) => {
   }
   const passwordHash = await hashPassword(password)
   try {
-    const result = db.prepare('INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)')
-      .run(username, passwordHash, role)
+    const result = stmts.insertUser.run(username, passwordHash, role)
     res.json({ id: result.lastInsertRowid, username, role })
   } catch (e) {
     if (e.code === 'SQLITE_CONSTRAINT_UNIQUE') {
@@ -384,24 +438,19 @@ app.delete('/api/users/:id', requireAdmin, apiWriteLimiter, (req, res) => {
   if (id === req.session.user.id) {
     return res.status(400).json({ error: 'Cannot delete your own account' })
   }
-  const result = db.prepare('DELETE FROM users WHERE id = ?').run(id)
+  const result = stmts.deleteUser.run(id)
   if (result.changes === 0) return res.status(404).json({ error: 'User not found' })
   res.json({ ok: true })
 })
 
 // ---------------------------------------------------------------------------
-// Stream endpoint
+// Stream endpoint – media path served from cache, no DB round-trip per request
 // ---------------------------------------------------------------------------
 app.use('/stream', streamLimiter, (req, res) => {
-  const mediaFile = db.prepare("SELECT value FROM settings WHERE key = 'media_file'").get()?.value || 'test.mp4'
-  const mediaDir = path.join(__dirname, 'media')
-  const mediaPath = path.join(mediaDir, mediaFile)
-
-  if (!fs.existsSync(mediaPath)) {
+  if (!fs.existsSync(cachedMediaPath)) {
     return res.status(404).send('Media file not found. Add it to the /media directory.')
   }
-
-  send(req, mediaFile, { root: mediaDir }).pipe(res)
+  send(req, cachedMediaFile, { root: MEDIA_DIR }).pipe(res)
 })
 
 // ---------------------------------------------------------------------------
@@ -422,13 +471,36 @@ const channel = {
   currentTime: 0
 }
 
-function getSettings() {
-  const rows = db.prepare('SELECT key, value FROM settings').all()
-  return Object.fromEntries(rows.map(r => [r.key, r.value]))
+// ---------------------------------------------------------------------------
+// Broadcast helpers
+// ---------------------------------------------------------------------------
+
+// Heartbeat frame – built once per tick so all clients get the same pre-serialized
+// string.  Using string concat avoids JSON.stringify on the hot 1 Hz loop.
+let heartbeatFrame = ''
+function buildHeartbeatFrame() {
+  heartbeatFrame = `{"type":"heartbeat","message":{"server-time":"${new Date().toISOString()}","video-seek-time":${channel.currentTime}}}`
+}
+
+// Welcome frame – prefix is cached and only rebuilt when MOTD/settings change.
+// The per-connection seek time is appended at connection time.
+let welcomePrefix = ''
+function rebuildWelcomePrefix() {
+  const motd = JSON.stringify(getSettings()['message-of-the-day'] || '')
+  welcomePrefix = `{"type":"welcome","message":{"server-launch-time":"${channel.launchTime}","message-of-the-day":${motd},"video-seek-time":`
+}
+function buildWelcomeFrame() {
+  return `${welcomePrefix}${channel.currentTime}}}`
 }
 
 function broadcast(packet) {
   const data = JSON.stringify(packet)
+  for (const client of wss.clients) {
+    if (client.readyState === 1 /* OPEN */) client.send(data)
+  }
+}
+
+function broadcastRaw(data) {
   for (const client of wss.clients) {
     if (client.readyState === 1 /* OPEN */) client.send(data)
   }
@@ -450,15 +522,7 @@ httpServer.on('upgrade', (req, socket, head) => {
 })
 
 wss.on('connection', (ws) => {
-  const settings = getSettings()
-  ws.send(JSON.stringify({
-    type: 'welcome',
-    message: {
-      'server-launch-time': channel.launchTime,
-      'message-of-the-day': settings['message-of-the-day'],
-      'video-seek-time': channel.currentTime
-    }
-  }))
+  ws.send(buildWelcomeFrame())
 
   ws.on('message', (raw) => {
     let packet
@@ -489,12 +553,10 @@ wss.on('connection', (ws) => {
   })
 })
 
-// Heartbeat every second
+// Heartbeat every second – build the frame once, send same string to all clients
 const heartbeatInterval = setInterval(() => {
-  broadcast({
-    type: 'heartbeat',
-    message: { 'server-time': new Date().toISOString(), 'video-seek-time': channel.currentTime }
-  })
+  buildHeartbeatFrame()
+  broadcastRaw(heartbeatFrame)
 }, 1000)
 heartbeatInterval.unref()
 
@@ -505,12 +567,15 @@ const PORT = parseInt(process.env.PORT || '3016', 10)
 
 await ensureAdmin()
 
-const mediaDir = path.join(__dirname, 'media')
-if (!fs.existsSync(mediaDir)) fs.mkdirSync(mediaDir, { recursive: true })
+if (!fs.existsSync(MEDIA_DIR)) fs.mkdirSync(MEDIA_DIR, { recursive: true })
 
-const mediaFile = getSettings().media_file
-if (!fs.existsSync(path.join(mediaDir, mediaFile))) {
-  console.warn(`\x1b[33mWarning: media file "${mediaFile}" not found in /media\x1b[0m`)
+// Warm the caches (settings → media path → welcome prefix) before first request
+getSettings()
+rebuildMediaCache()
+rebuildWelcomePrefix()
+
+if (!fs.existsSync(cachedMediaPath)) {
+  console.warn(`\x1b[33mWarning: media file "${cachedMediaFile}" not found in /media\x1b[0m`)
 }
 
 httpServer.listen(PORT, () => {

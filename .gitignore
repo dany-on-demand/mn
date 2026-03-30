@@ -1,5 +1,8 @@
 node_modules/
 sessions/
 media/*
-!.gitkeep
+!media/.gitkeep
+data/*
+!data/.gitkeep
+.env
 .vscode/

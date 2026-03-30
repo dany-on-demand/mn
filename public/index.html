@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>movie night</title>
+  <link rel="icon" href="/icon.ico" />
+  <link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+  <canvas class="background-funstuff"></canvas>
+
+  <!-- Login modal -->
+  <div id="login-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="login-title">
+    <div class="modal-box">
+      <h2 id="login-title">login</h2>
+      <form id="login-form" autocomplete="on">
+        <fieldset>
+          <legend>username</legend>
+          <input type="text" id="login-username" name="username" autocomplete="username" required />
+        </fieldset>
+        <fieldset>
+          <legend>password</legend>
+          <input type="password" id="login-password" name="password" autocomplete="current-password" required />
+        </fieldset>
+        <p id="login-error" class="form-error hidden"></p>
+        <div class="form-actions">
+          <button type="submit" class="button-alternative">
+            login <span class="arrow">❯</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <main class="container container-medium-75vw">
+    <!-- Nav bar -->
+    <nav id="navbar" class="row navbar">
+      <img src="/banner.png" alt="Movie Night" class="banner" />
+      <div class="nav-actions">
+        <button id="btn-login" class="button-alternative hidden">login <span class="arrow">❯</span></button>
+        <span id="nav-user" class="nav-user hidden"></span>
+        <button id="btn-admin" class="button-alternative hidden">admin <span class="arrow">❯</span></button>
+        <button id="btn-logout" class="button-alternative hidden">logout <span class="arrow">❯</span></button>
+      </div>
+    </nav>
+
+    <!-- Main view -->
+    <div id="view-main" class="app-main-content row">
+      <div class="video-container column column-large-7-12">
+        <div class="video-controls play-pause-container">
+          <div class="pause">
+            <svg xmlns:xlink="http://www.w3.org/1999/xlink" height="100%" version="1.1" viewBox="0 0 36 64">
+              <path fill="white" d="M 12,54 16,54 16,10 12,10 z M 21,54 25,54 25,10 21,10 z"/>
+            </svg>
+          </div>
+          <div class="play">
+            <svg xmlns:xlink="http://www.w3.org/1999/xlink" height="100%" version="1.1" viewBox="0 0 36 64">
+              <path fill="white" d="M 12,54 36,32 12,10 z"/>
+            </svg>
+          </div>
+        </div>
+        <button class="video-controls fullscreen">fullscreen</button>
+        <video src="/stream" preload="metadata"></video>
+      </div>
+
+      <div class="chat column column-large-5-12">
+        <div class="chat-box row" id="chat-box">
+          <span class="motd" id="motd"></span>
+        </div>
+        <div class="chat-input row">
+          <input id="chat-name-input" type="text" name="name" placeholder="Pick a name…" />
+          <input id="chat-msg-input" type="text" name="chat" placeholder="Type a message…" style="display:none" />
+          <button class="chat-button" id="chat-send-btn">send</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Admin panel (shown inline when admin is logged in) -->
+    <div id="view-admin" class="hidden admin-panel">
+      <h2>admin panel</h2>
+
+      <section class="admin-section">
+        <h3>settings</h3>
+        <form id="settings-form">
+          <fieldset>
+            <legend>media file</legend>
+            <input type="text" id="settings-media-file" name="media_file" />
+          </fieldset>
+          <fieldset>
+            <legend>message of the day</legend>
+            <textarea id="settings-motd" name="message-of-the-day" class="full-width" rows="2"></textarea>
+          </fieldset>
+          <div class="form-actions">
+            <button type="submit" class="button-alternative">
+              save <span class="arrow">❯</span>
+            </button>
+          </div>
+          <p id="settings-msg" class="form-feedback hidden"></p>
+        </form>
+      </section>
+
+      <section class="admin-section">
+        <h3>users</h3>
+        <table id="users-table" class="users-table">
+          <thead><tr><th>username</th><th>role</th><th>created</th><th></th></tr></thead>
+          <tbody id="users-tbody"></tbody>
+        </table>
+        <form id="add-user-form" class="add-user-form">
+          <fieldset>
+            <legend>new user</legend>
+            <input type="text" name="username" placeholder="username" required />
+            <input type="password" name="password" placeholder="password" required />
+            <select name="role">
+              <option value="user">user</option>
+              <option value="admin">admin</option>
+            </select>
+          </fieldset>
+          <div class="form-actions">
+            <button type="submit" class="button-alternative">
+              add user <span class="arrow">❯</span>
+            </button>
+          </div>
+          <p id="add-user-msg" class="form-feedback hidden"></p>
+        </form>
+      </section>
+
+      <section class="admin-section">
+        <h3>change password</h3>
+        <form id="change-password-form">
+          <fieldset>
+            <legend>current password</legend>
+            <input type="password" name="currentPassword" required />
+          </fieldset>
+          <fieldset>
+            <legend>new password</legend>
+            <input type="password" name="newPassword" required minlength="8" />
+          </fieldset>
+          <div class="form-actions">
+            <button type="submit" class="button-alternative">
+              update <span class="arrow">❯</span>
+            </button>
+          </div>
+          <p id="change-password-msg" class="form-feedback hidden"></p>
+        </form>
+      </section>
+    </div>
+
+    <!-- Info toast -->
+    <div id="info-toast" class="info-message-container hidden">
+      <span class="info-message" id="info-message-text"></span>
+      <button class="close-button" id="close-toast" aria-label="Close"></button>
+    </div>
+  </main>
+
+  <footer class="container container-medium-75vw">
+    <center>
+      <p>Unauthorised use under penalty of excommunication</p>
+      <pre id="server-time" class="timestamp"></pre>
+      <pre id="uptime" class="uptime"></pre>
+    </center>
+  </footer>
+
+  <img src="/footer.png" alt="" class="footer-img" />
+
+  <script type="module" src="/app.js"></script>
+  <script src="/funstuff.js" defer></script>
+</body>
+</html>

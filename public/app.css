@@ -408,3 +408,178 @@ button.fullscreen {
   -webkit-animation-iteration-count: infinite;
   animation-iteration-count: infinite;
 }
+/* ---------------------------------------------------------------------------
+   Modern additions – navbar, modal, admin panel, auth UI
+   --------------------------------------------------------------------------- */
+
+.hidden { display: none !important; }
+
+/* Navbar */
+.navbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0;
+  border-bottom: 2px solid #00C5CD;
+  margin-bottom: 1rem;
+}
+
+.navbar .banner {
+  max-height: 60px;
+  width: auto;
+}
+
+.nav-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.nav-user {
+  font-weight: bold;
+  color: #00C5CD;
+}
+
+/* Login modal */
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.modal-box {
+  background: #fff;
+  padding: 2rem;
+  min-width: 320px;
+  box-shadow: 0 0 2rem rgba(0,0,0,0.5);
+}
+
+.modal-box h2 {
+  margin: 0 0 1.5rem;
+  color: #222;
+}
+
+/* Form helpers */
+.form-actions {
+  position: relative;
+  margin-top: 1.5rem;
+  min-height: 2.5rem;
+}
+
+.form-error {
+  color: #c0392b;
+  font-size: 0.9rem;
+  margin-top: 0.5rem;
+}
+
+.form-feedback {
+  margin-top: 0.5rem;
+  font-size: 0.9rem;
+}
+
+.form-feedback.success { color: #27ae60; }
+.form-feedback.error   { color: #c0392b; }
+
+/* Admin panel */
+.admin-panel {
+  padding: 1rem 0;
+}
+
+.admin-panel h2 {
+  border-bottom: 2px solid #00C5CD;
+  padding-bottom: 0.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.admin-section {
+  margin-bottom: 2.5rem;
+}
+
+.admin-section h3 {
+  margin-bottom: 1rem;
+  color: #555;
+  text-transform: uppercase;
+  font-size: 0.85rem;
+  letter-spacing: 2px;
+}
+
+/* Users table */
+.users-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 1.5rem;
+  font-size: 0.9rem;
+}
+
+.users-table th,
+.users-table td {
+  text-align: left;
+  padding: 0.4rem 0.75rem;
+  border-bottom: 1px solid #eee;
+}
+
+.users-table th {
+  font-weight: bold;
+  color: #555;
+  border-bottom: 2px solid #00C5CD;
+}
+
+.btn-delete {
+  font-size: 0.8rem;
+  padding: 0.1rem 0.4rem;
+  border-color: #c0392b;
+  color: #c0392b;
+}
+
+/* Add-user form inline */
+.add-user-form fieldset {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.add-user-form input,
+.add-user-form select {
+  font-family: inherit;
+  font-size: 1rem;
+  border: 0;
+  border-bottom: 2px solid black;
+  padding: 0.2rem;
+  flex: 1;
+  min-width: 120px;
+}
+
+.add-user-form select {
+  background: #fff;
+  cursor: pointer;
+}
+
+/* Footer image */
+.footer-img {
+  display: block;
+  margin: 0 auto;
+  max-width: 960px;
+  width: 100%;
+}
+
+/* Info toast – replaces the old .info-message-container */
+.info-message-container {
+  position: fixed;
+  bottom: 1.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #00FF34;
+  padding: 0.75rem 1.5rem;
+  font-weight: bold;
+  font-size: 1.2rem;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  box-shadow: 0 4px 1rem rgba(0,0,0,0.2);
+  z-index: 200;
+}

@@ -1,174 +1,428 @@
-document.addEventListener('DOMContentLoaded', main)
+// ---------------------------------------------------------------------------
+// Movie Night – modern client (ES module)
+// ---------------------------------------------------------------------------
 
-let page = {}
-function main() {
-    renderPage()
+// Constants
+const WS_RECONNECT_DELAY_MS = 3000
+const VIDEO_SYNC_THRESHOLD_S = 2  // seconds before we force-sync the video
 
-    page.ws = new WebSocket("ws://" + location.hostname + ":8080")
+const state = {
+  user: null,         // logged-in user object from /api/auth/me
+  chatName: null,     // guest chat name (for unauthenticated users)
+  chatMode: 'pick-name', // 'pick-name' | 'chat'
+  serverLaunchTime: null,
+  ws: null,
+  adminView: false
+}
 
-    page.ws.onmessage = function (event) {
-        let parsed_data = JSON.parse(event.data)
-        switch (parsed_data.type) {
-            case 'welcome':
-                handleWelcomeMessage(parsed_data.message)
-                break
-            case 'heartbeat':
-                handleHeartbeatMessage(parsed_data.message)
-                break
-            case 'authoritative':
-                handleAuthoritativeMessage(parsed_data.message)
-                break
-            case 'incoming-chat-message':
-                handleChatMessage(parsed_data.message)
-                break
-        }
+// ---------------------------------------------------------------------------
+// Utility helpers
+// ---------------------------------------------------------------------------
+function $(sel) { return document.querySelector(sel) }
+function show(el) { el?.classList.remove('hidden') }
+function hide(el) { el?.classList.add('hidden') }
+
+async function apiFetch(path, options = {}) {
+  const res = await fetch(path, {
+    headers: { 'Content-Type': 'application/json' },
+    ...options
+  })
+  const data = await res.json().catch(() => null)
+  return { ok: res.ok, status: res.status, data }
+}
+
+// ---------------------------------------------------------------------------
+// WebSocket
+// ---------------------------------------------------------------------------
+function connectWebSocket() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
+  const ws = new WebSocket(`${proto}//${location.host}`)
+  state.ws = ws
+
+  ws.addEventListener('message', (event) => {
+    let packet
+    try { packet = JSON.parse(event.data) } catch { return }
+    switch (packet.type) {
+      case 'welcome':         handleWelcome(packet.message); break
+      case 'heartbeat':       handleHeartbeat(packet.message); break
+      case 'authoritative':   handleAuthoritative(packet.message); break
+      case 'incoming-chat-message': handleChatMessage(packet.message); break
     }
+  })
 
-    let video_container = document.querySelector(".video-container")
-    let video = document.querySelector('video')
-
-    video_container.addEventListener("click", function (event) {
-        event.stopPropagation()
-        if (video.paused || video.ended) {
-            video.play()
-            let video_controls = document.querySelector('.video-controls')
-            video_controls.classList.toggle("animated")
-            video_controls.classList.toggle("zoomIn")
-            document.querySelector('.play').style.display = 'initial'
-            document.querySelector('.pause').style.display = 'none'
-        }
-        else {
-            video.pause()
-            let video_controls = document.querySelector('.video-controls')
-            video_controls.classList.toggle("animated")
-            video_controls.classList.toggle("zoomIn")
-            document.querySelector('.pause').style.display = 'initial'
-            document.querySelector('.play').style.display = 'none'
-        }
-    })
-
-    document.querySelector("button.fullscreen").addEventListener("click", function (event) {
-        if (video.requestFullscreen) video.requestFullscreen()
-        else if (video.mozRequestFullScreen) video.mozRequestFullScreen()
-        else if (video.webkitRequestFullScreen) video.webkitRequestFullScreen()
-        else if (video.msRequestFullscreen) video.msRequestFullscreen()
-        event.stopPropagation()
-    })
-
-    document.querySelector("button.close-button").addEventListener("click", function () {
-        document.querySelector(".info-message-container").style.display = 'none'
-    })
-
-    page.chat_mode = "pick username"
-
-    document.querySelector("button.chat-button").addEventListener("click", handleChatInput)
-    document.querySelector("input[name=chat]").addEventListener("keyup", handleChatInput)
-    document.querySelector("input[name=name]").addEventListener("keyup", handleChatInput)
+  ws.addEventListener('close', () => {
+    setTimeout(connectWebSocket, WS_RECONNECT_DELAY_MS)
+  })
 }
 
-function handleChatInput(event) {
-    if (event.type === "keyup") {
-        event.which = event.which || event.keyCode
-        if (event.which != 13) //enter key 
-            return
+function wsSend(packet) {
+  if (state.ws?.readyState === WebSocket.OPEN) {
+    state.ws.send(JSON.stringify(packet))
+  }
+}
+
+// ---------------------------------------------------------------------------
+// WS message handlers
+// ---------------------------------------------------------------------------
+function handleWelcome(msg) {
+  state.serverLaunchTime = new Date(msg['server-launch-time'])
+  $('#motd').textContent = msg['message-of-the-day'] || ''
+  const video = $('video')
+  if (video) video.currentTime = msg['video-seek-time'] || 0
+}
+
+function handleHeartbeat(msg) {
+  const serverTime = new Date(msg['server-time'])
+  $('#server-time').textContent = `Server time: ${serverTime.toTimeString()}`
+
+  if (state.serverLaunchTime) {
+    const mins = Math.floor((Date.now() - state.serverLaunchTime.getTime()) / 60000)
+    $('#uptime').textContent = `Uptime: ${mins} minutes`
+  }
+
+  const video = $('video')
+  if (video && Math.abs((msg['video-seek-time'] || 0) - video.currentTime) > VIDEO_SYNC_THRESHOLD_S) {
+    video.currentTime = msg['video-seek-time']
+    displayToast('Video synchronised with channel time!')
+  }
+}
+
+function handleAuthoritative(msg) {
+  const video = $('video')
+  if (!video) return
+  video.pause()
+  video.load()
+  video.currentTime = msg['video-seek-time'] || 0
+  video.play().catch(() => {})
+  displayToast('Loaded new movie!')
+}
+
+function handleChatMessage(msg) {
+  const box = $('#chat-box')
+  const p = document.createElement('p')
+  p.className = 'chat-message'
+
+  const owner = document.createElement('span')
+  owner.className = 'chat-message-owner'
+  owner.textContent = msg['chat-message-owner'] || 'Anonymous'
+
+  p.appendChild(owner)
+  // Use textContent on a separate node to avoid XSS
+  const text = document.createTextNode('\u00a0' + msg['chat-message'])
+  p.appendChild(text)
+
+  box.appendChild(p)
+  box.scrollTop = box.scrollHeight
+}
+
+// ---------------------------------------------------------------------------
+// Video controls
+// ---------------------------------------------------------------------------
+function initVideo() {
+  const container = $('.video-container')
+  const video = $('video')
+  if (!container || !video) return
+
+  container.addEventListener('click', (e) => {
+    e.stopPropagation()
+    const controls = $('.play-pause-container')
+    if (video.paused || video.ended) {
+      video.play().catch(() => {})
+      controls?.classList.add('animated', 'zoomIn')
+      $('.play').style.display = 'initial'
+      $('.pause').style.display = 'none'
+    } else {
+      video.pause()
+      controls?.classList.add('animated', 'zoomIn')
+      $('.pause').style.display = 'initial'
+      $('.play').style.display = 'none'
     }
-    let chat_message_input = document.querySelector("input[name=chat]")
-    let chat_name_input = document.querySelector("input[name=name]")
-    if (page.chat_mode === "pick username") {
-        page.chat_name = chat_name_input.value
-        chat_name_input.value = ''
-        page.chat_mode = "chat"
-        chat_name_input.classList.add("animated")
-        chat_name_input.classList.add("bounceIn")
-        setTimeout(function () {
-            chat_name_input.style.display = 'none'
-            chat_message_input.style.display = 'initial'
-            chat_message_input.focus()
-        }, 100)
+  })
+
+  $('button.fullscreen')?.addEventListener('click', (e) => {
+    e.stopPropagation()
+    if (video.requestFullscreen) video.requestFullscreen()
+    else if (video.webkitRequestFullScreen) video.webkitRequestFullScreen()
+  })
+
+  // Admin: broadcast seek time updates
+  video.addEventListener('timeupdate', () => {
+    if (state.user?.role === 'admin') {
+      wsSend({ type: 'admin-seek-time-update', message: { 'video-seek-time': video.currentTime } })
     }
-    else if (page.chat_mode === "chat") {
-        page.ws.send(JSON.stringify(
-            {
-                "type": "chat-message",
-                message: {
-                    "chat-message": chat_message_input.value,
-                    "chat-message-owner": page.chat_name
-                }
-            }))
-        chat_message_input.value = ''
-        chat_message_input.focus()
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Chat
+// ---------------------------------------------------------------------------
+function updateChatState() {
+  const nameInput = $('#chat-name-input')
+  const msgInput  = $('#chat-msg-input')
+
+  // If the user is logged-in, skip the name-picking step
+  if (state.user) {
+    state.chatName = state.user.username
+    state.chatMode = 'chat'
+    hide(nameInput)
+    show(msgInput)
+    msgInput?.focus()
+  } else if (state.chatMode === 'pick-name') {
+    show(nameInput)
+    hide(msgInput)
+  }
+}
+
+// Set up chat event listeners once on page load
+function initChat() {
+  const nameInput = $('#chat-name-input')
+  const msgInput  = $('#chat-msg-input')
+  const sendBtn   = $('#chat-send-btn')
+
+  function handleChatInput(event) {
+    if (event.type === 'keyup' && event.key !== 'Enter') return
+
+    if (state.chatMode === 'pick-name') {
+      const name = nameInput.value.trim()
+      if (!name) return
+      state.chatName = name
+      nameInput.value = ''
+      state.chatMode = 'chat'
+      nameInput.classList.add('animated', 'bounceIn')
+      setTimeout(() => {
+        hide(nameInput)
+        show(msgInput)
+        msgInput?.focus()
+      }, 100)
+    } else if (state.chatMode === 'chat') {
+      const text = msgInput.value.trim()
+      if (!text) return
+      wsSend({
+        type: 'chat-message',
+        message: { 'chat-message': text, 'chat-message-owner': state.chatName }
+      })
+      msgInput.value = ''
+      msgInput.focus()
     }
+  }
+
+  sendBtn?.addEventListener('click', handleChatInput)
+  nameInput?.addEventListener('keyup', handleChatInput)
+  msgInput?.addEventListener('keyup', handleChatInput)
+
+  updateChatState()
 }
 
-function renderPage() {
-    let timestamp_element = document.createElement('pre')
-    timestamp_element.className = "timestamp"
-
-    document.querySelector('footer').appendChild(timestamp_element)
+// ---------------------------------------------------------------------------
+// Toast notification
+// ---------------------------------------------------------------------------
+function displayToast(message) {
+  const toast = $('#info-toast')
+  const text  = $('#info-message-text')
+  if (!toast || !text) return
+  text.textContent = message
+  toast.classList.remove('animated', 'bounceIn')
+  setTimeout(() => {
+    show(toast)
+    toast.classList.add('animated', 'bounceIn')
+  }, 50)
 }
 
-function handleWelcomeMessage(message) {
-    page.server_launch_time = new Date(message['server-launch-time'])
-    let uptime_element = document.createElement('pre')
-    uptime_element.className = "uptime"
-    uptime_element.textContent = 'Uptime: ' + new Date(new Date() - page.server_launch_time)
+$('#close-toast')?.addEventListener('click', () => hide($('#info-toast')))
 
-    document.querySelector('footer').appendChild(uptime_element)
+// ---------------------------------------------------------------------------
+// Auth UI
+// ---------------------------------------------------------------------------
+function updateNavBar() {
+  const btnLogin  = $('#btn-login')
+  const btnLogout = $('#btn-logout')
+  const btnAdmin  = $('#btn-admin')
+  const navUser   = $('#nav-user')
 
-    document.querySelector('.motd').textContent = message['message-of-the-day']
-
-    document.querySelector("video").currentTime = message['video-seek-time']
+  if (state.user) {
+    hide(btnLogin)
+    show(navUser)
+    navUser.textContent = state.user.username
+    show(btnLogout)
+    if (state.user.role === 'admin') show(btnAdmin)
+    else hide(btnAdmin)
+  } else {
+    show(btnLogin)
+    hide(navUser)
+    hide(btnLogout)
+    hide(btnAdmin)
+  }
 }
 
-function handleHeartbeatMessage(message) {
-    page.server_time = new Date(message['server-time'])
-    document.querySelector('.timestamp').textContent = 'Server time: ' + page.server_time.toTimeString()
-    let date_diff = Math.floor((Date.now() - page.server_launch_time.getTime()) / 1000 / 60)
-    document.querySelector('.uptime').textContent = 'Uptime: ' + date_diff + ' minutes'
+// Login modal
+$('#btn-login')?.addEventListener('click', () => show($('#login-modal')))
+$('#login-modal')?.addEventListener('click', (e) => {
+  if (e.target === $('#login-modal')) hide($('#login-modal'))
+})
 
-    let video_element = document.querySelector("video")
-    if (Math.abs(message['video-seek-time'] - video_element.currentTime) > 1) {
-        video_element.currentTime = message['video-seek-time']
+$('#login-form')?.addEventListener('submit', async (e) => {
+  e.preventDefault()
+  const username = $('#login-username').value.trim()
+  const password = $('#login-password').value
+  const errEl = $('#login-error')
 
-        displayInfoMessage("Video synchronised with channel time!")
+  hide(errEl)
+  const { ok, data } = await apiFetch('/api/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ username, password })
+  })
+
+  if (ok) {
+    state.user = data
+    hide($('#login-modal'))
+    $('#login-form').reset()
+    updateNavBar()
+    updateChatState()
+    displayToast(`Welcome back, ${data.username}!`)
+  } else {
+    errEl.textContent = data?.error || 'Login failed'
+    show(errEl)
+  }
+})
+
+$('#btn-logout')?.addEventListener('click', async () => {
+  await apiFetch('/api/auth/logout', { method: 'POST' })
+  state.user = null
+  state.chatMode = 'pick-name'
+  state.chatName = null
+  state.adminView = false
+  updateNavBar()
+  hide($('#view-admin'))
+  show($('#view-main'))
+  updateChatState()
+  displayToast('Logged out.')
+})
+
+// ---------------------------------------------------------------------------
+// Admin panel
+// ---------------------------------------------------------------------------
+$('#btn-admin')?.addEventListener('click', () => {
+  state.adminView = !state.adminView
+  if (state.adminView) {
+    show($('#view-admin'))
+    hide($('#view-main'))
+    loadSettings()
+    loadUsers()
+  } else {
+    hide($('#view-admin'))
+    show($('#view-main'))
+  }
+})
+
+async function loadSettings() {
+  const { ok, data } = await apiFetch('/api/settings')
+  if (!ok) return
+  $('#settings-media-file').value = data['media_file'] || ''
+  $('#settings-motd').value = data['message-of-the-day'] || ''
+}
+
+$('#settings-form')?.addEventListener('submit', async (e) => {
+  e.preventDefault()
+  const msgEl = $('#settings-msg')
+  hide(msgEl)
+  const payload = {
+    media_file: $('#settings-media-file').value.trim(),
+    'message-of-the-day': $('#settings-motd').value.trim()
+  }
+  const { ok, data } = await apiFetch('/api/settings', { method: 'POST', body: JSON.stringify(payload) })
+  msgEl.textContent = ok ? 'Saved!' : (data?.error || 'Error saving settings')
+  msgEl.className = ok ? 'form-feedback success' : 'form-feedback error'
+  show(msgEl)
+})
+
+async function loadUsers() {
+  const { ok, data } = await apiFetch('/api/users')
+  if (!ok) return
+  const tbody = $('#users-tbody')
+  tbody.innerHTML = ''
+  for (const u of data) {
+    const tr = document.createElement('tr')
+    const created = new Date(u.created_at).toLocaleDateString()
+    tr.innerHTML = `<td>${escapeHtml(u.username)}</td><td>${escapeHtml(u.role)}</td><td>${created}</td>`
+    const td = document.createElement('td')
+    if (u.id !== state.user?.id) {
+      const btn = document.createElement('button')
+      btn.textContent = 'delete'
+      btn.className = 'btn-delete'
+      btn.addEventListener('click', async () => {
+        if (!confirm(`Delete user "${u.username}"?`)) return
+        const { ok } = await apiFetch(`/api/users/${u.id}`, { method: 'DELETE' })
+        if (ok) loadUsers()
+      })
+      td.appendChild(btn)
     }
+    tr.appendChild(td)
+    tbody.appendChild(tr)
+  }
 }
 
-function handleAuthoritativeMessage(message) {
-    let video_element = document.querySelector("video")
-    video_element.currentTime = message['video-seek-time']
-    video_element.pause()
-    video_element.load()
-    video_element.play()
-    displayInfoMessage("Loaded new movie!")
+$('#add-user-form')?.addEventListener('submit', async (e) => {
+  e.preventDefault()
+  const form = e.target
+  const msgEl = $('#add-user-msg')
+  hide(msgEl)
+  const payload = {
+    username: form.elements['username'].value.trim(),
+    password: form.elements['password'].value,
+    role: form.elements['role'].value
+  }
+  const { ok, data } = await apiFetch('/api/users', { method: 'POST', body: JSON.stringify(payload) })
+  if (ok) {
+    form.reset()
+    loadUsers()
+    msgEl.textContent = 'User created.'
+    msgEl.className = 'form-feedback success'
+  } else {
+    msgEl.textContent = data?.error || 'Error creating user'
+    msgEl.className = 'form-feedback error'
+  }
+  show(msgEl)
+})
+
+$('#change-password-form')?.addEventListener('submit', async (e) => {
+  e.preventDefault()
+  const form = e.target
+  const msgEl = $('#change-password-msg')
+  hide(msgEl)
+  const payload = {
+    currentPassword: form.elements['currentPassword'].value,
+    newPassword: form.elements['newPassword'].value
+  }
+  const { ok, data } = await apiFetch('/api/auth/change-password', { method: 'POST', body: JSON.stringify(payload) })
+  msgEl.textContent = ok ? 'Password updated!' : (data?.error || 'Error updating password')
+  msgEl.className = ok ? 'form-feedback success' : 'form-feedback error'
+  show(msgEl)
+  if (ok) form.reset()
+})
+
+// ---------------------------------------------------------------------------
+// Utility
+// ---------------------------------------------------------------------------
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
 }
 
-function handleChatMessage(message) {
-    let chatBox = document.querySelector('.chat-box')
-    let chatMessageElement = document.createElement('p')
-    chatMessageElement.classList.add('chat-message')
+// ---------------------------------------------------------------------------
+// Bootstrap
+// ---------------------------------------------------------------------------
+async function main() {
+  // Check current auth state
+  const { data: user } = await apiFetch('/api/auth/me')
+  state.user = user || null
 
-    let chatMessageOwnerElement = document.createElement('span')
-    chatMessageOwnerElement.classList.add('chat-message-owner')
-    chatMessageOwnerElement.textContent = message['chat-message-owner']
-
-    chatMessageElement.appendChild(chatMessageOwnerElement)
-    chatMessageElement.innerHTML += '&nbsp;' + message['chat-message']
-
-    chatBox.appendChild(chatMessageElement)
-    
-    chatBox.scrollTop = chatBox.scrollHeight
+  updateNavBar()
+  initVideo()
+  initChat()
+  connectWebSocket()
 }
 
-function displayInfoMessage(message) {
-    let info_message_container = document.querySelector(".info-message-container")
-
-    info_message_container.querySelector(".info-message").textContent = message
-    info_message_container.classList.remove("animated")
-    info_message_container.classList.remove("bounceIn")
-    setTimeout(function () {
-        info_message_container.style.display = 'inline-block'
-        info_message_container.classList.add("animated")
-        info_message_container.classList.add("bounceIn")
-    }, 100)
-}
+main()

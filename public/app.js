@@ -3,8 +3,9 @@
 // ---------------------------------------------------------------------------
 
 // Constants
-const WS_RECONNECT_DELAY_MS = 3000
-const VIDEO_SYNC_THRESHOLD_S = 2  // seconds before we force-sync the video
+const VIDEO_SYNC_THRESHOLD_S  = 2    // seconds of drift before force-syncing
+const WS_RECONNECT_BASE_MS    = 1000 // initial reconnect delay
+const WS_RECONNECT_MAX_MS     = 30000 // cap on reconnect delay
 
 const state = {
   user: null,         // logged-in user object from /api/auth/me
@@ -13,7 +14,8 @@ const state = {
   serverLaunchTime: null,
   ws: null,
   adminView: false,
-  csrfToken: null     // synchronizer CSRF token
+  csrfToken: null,    // synchronizer CSRF token
+  wsReconnectDelay: WS_RECONNECT_BASE_MS
 }
 
 // ---------------------------------------------------------------------------
@@ -42,12 +44,25 @@ async function apiFetch(path, options = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// WebSocket
+// WebSocket – with status indicator and exponential backoff
 // ---------------------------------------------------------------------------
+function setWsStatus(status) {
+  const dot = $('#ws-status')
+  if (!dot) return
+  dot.className = `ws-dot ws-dot--${status}`
+  dot.title = status === 'online' ? 'Connected' : status === 'offline' ? 'Disconnected' : 'Connecting…'
+}
+
 function connectWebSocket() {
+  setWsStatus('connecting')
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
   const ws = new WebSocket(`${proto}//${location.host}`)
   state.ws = ws
+
+  ws.addEventListener('open', () => {
+    state.wsReconnectDelay = WS_RECONNECT_BASE_MS  // reset on success
+    setWsStatus('online')
+  })
 
   ws.addEventListener('message', (event) => {
     let packet
@@ -61,7 +76,12 @@ function connectWebSocket() {
   })
 
   ws.addEventListener('close', () => {
-    setTimeout(connectWebSocket, WS_RECONNECT_DELAY_MS)
+    setWsStatus('offline')
+    setTimeout(() => {
+      // Exponential backoff: 1 s → 2 s → 4 s … capped at 30 s
+      state.wsReconnectDelay = Math.min(state.wsReconnectDelay * 2, WS_RECONNECT_MAX_MS)
+      connectWebSocket()
+    }, state.wsReconnectDelay)
   })
 }
 
@@ -230,8 +250,9 @@ function initChat() {
 }
 
 // ---------------------------------------------------------------------------
-// Toast notification
+// Toast notification – auto-dismisses after 4 s
 // ---------------------------------------------------------------------------
+let toastTimer = null
 function displayToast(message) {
   const toast = $('#info-toast')
   const text  = $('#info-message-text')
@@ -242,9 +263,34 @@ function displayToast(message) {
     show(toast)
     toast.classList.add('animated', 'bounceIn')
   }, 50)
+  if (toastTimer) clearTimeout(toastTimer)
+  toastTimer = setTimeout(() => hide(toast), 4000)
 }
 
-$('#close-toast')?.addEventListener('click', () => hide($('#info-toast')))
+$('#close-toast')?.addEventListener('click', () => {
+  if (toastTimer) clearTimeout(toastTimer)
+  hide($('#info-toast'))
+})
+
+// ---------------------------------------------------------------------------
+// Keyboard shortcuts
+// ---------------------------------------------------------------------------
+document.addEventListener('keydown', (e) => {
+  // Don't fire while typing in an input/textarea
+  if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return
+
+  if (e.key === ' ') {
+    // Spacebar: play / pause
+    e.preventDefault()
+    const video = $('video')
+    if (!video) return
+    if (video.paused || video.ended) video.play().catch(() => {})
+    else video.pause()
+  } else if (e.key === 'Escape') {
+    // Escape: close login modal
+    hide($('#login-modal'))
+  }
+})
 
 // ---------------------------------------------------------------------------
 // Auth UI
@@ -324,11 +370,25 @@ $('#btn-admin')?.addEventListener('click', () => {
     hide($('#view-main'))
     loadSettings()
     loadUsers()
+    loadMediaFiles()
   } else {
     hide($('#view-admin'))
     show($('#view-main'))
   }
 })
+
+async function loadMediaFiles() {
+  const { ok, data } = await apiFetch('/api/media')
+  if (!ok) return
+  const list = $('#media-files-list')
+  if (!list) return
+  list.innerHTML = ''
+  for (const file of data) {
+    const opt = document.createElement('option')
+    opt.value = file
+    list.appendChild(opt)
+  }
+}
 
 async function loadSettings() {
   const { ok, data } = await apiFetch('/api/settings')

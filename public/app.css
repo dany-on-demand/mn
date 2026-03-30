@@ -583,3 +583,21 @@ button.fullscreen {
   box-shadow: 0 4px 1rem rgba(0,0,0,0.2);
   z-index: 200;
 }
+
+/* WebSocket connection status dot */
+.ws-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #888;
+  flex-shrink: 0;
+}
+.ws-dot--online      { background: #00C5CD; }
+.ws-dot--offline     { background: #c0392b; }
+.ws-dot--connecting  { background: #f39c12; }
+
+/* Footer centre alignment (replaces deprecated <center>) */
+.footer-center {
+  text-align: center;
+}

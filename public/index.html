@@ -38,6 +38,7 @@
     <nav id="navbar" class="row navbar">
       <img src="/banner.png" alt="Movie Night" class="banner" />
       <div class="nav-actions">
+        <span id="ws-status" class="ws-dot ws-dot--offline" title="Connecting…"></span>
         <button id="btn-login" class="button-alternative hidden">login <span class="arrow">❯</span></button>
         <span id="nav-user" class="nav-user hidden"></span>
         <button id="btn-admin" class="button-alternative hidden">admin <span class="arrow">❯</span></button>
@@ -85,7 +86,8 @@
         <form id="settings-form">
           <fieldset>
             <legend>media file</legend>
-            <input type="text" id="settings-media-file" name="media_file" />
+            <input type="text" id="settings-media-file" name="media_file" list="media-files-list" autocomplete="off" />
+            <datalist id="media-files-list"></datalist>
           </fieldset>
           <fieldset>
             <legend>message of the day</legend>
@@ -154,11 +156,11 @@
   </main>
 
   <footer class="container container-medium-75vw">
-    <center>
+    <div class="footer-center">
       <p>Unauthorised use under penalty of excommunication</p>
       <pre id="server-time" class="timestamp"></pre>
       <pre id="uptime" class="uptime"></pre>
-    </center>
+    </div>
   </footer>
 
   <img src="/footer.png" alt="" class="footer-img" />

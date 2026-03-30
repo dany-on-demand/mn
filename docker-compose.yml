@@ -8,6 +8,7 @@ services:
       - ./media:/app/media
       - mn_data:/app/data
     environment:
+      NODE_ENV: "production"
       PORT: "3016"
       # Set these to pre-configure the admin account on first run.
       # If omitted, a random password is printed to the container logs.

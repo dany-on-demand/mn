@@ -40,7 +40,7 @@ Then open **http://localhost:3016** in your browser.
 
 ## quick start (Node.js)
 
-**Requirements:** Node.js ≥ 22
+**Requirements:** Node.js ≥ 24
 
 ```sh
 git clone https://github.com/dany-on-demand/mn && cd mn

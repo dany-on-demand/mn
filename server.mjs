@@ -101,8 +101,9 @@ for (const [key, value] of Object.entries(defaultSettings)) {
 
 // ---------------------------------------------------------------------------
 // Persistent session secret
+// Env var SESSION_SECRET takes priority; otherwise generate+persist in DB.
 // ---------------------------------------------------------------------------
-let sessionSecret = stmts.getConfigValue.get('session_secret')?.value
+let sessionSecret = process.env.SESSION_SECRET || stmts.getConfigValue.get('session_secret')?.value
 if (!sessionSecret) {
   sessionSecret = randomBytes(32).toString('hex')
   stmts.insertConfigValue.run('session_secret', sessionSecret)
@@ -130,14 +131,24 @@ function invalidateSettings() {
 
 // ---------------------------------------------------------------------------
 // Media path cache — path.join + settings lookup done once, not per request
+// Also validates that the resolved path stays within MEDIA_DIR (path traversal guard).
 // ---------------------------------------------------------------------------
 const MEDIA_DIR = path.join(__dirname, 'media')
 let cachedMediaFile = null
 let cachedMediaPath = null
 
 function rebuildMediaCache() {
-  cachedMediaFile = getSettings().media_file || 'test.mp4'
-  cachedMediaPath = path.join(MEDIA_DIR, cachedMediaFile)
+  const file = getSettings().media_file || 'test.mp4'
+  const resolved = path.resolve(MEDIA_DIR, file)
+  // Reject any path that escapes MEDIA_DIR (e.g. ../data/mn.db)
+  if (!resolved.startsWith(MEDIA_DIR + path.sep)) {
+    console.warn(`[security] media_file "${file}" escapes media directory — ignoring`)
+    cachedMediaFile = 'test.mp4'
+    cachedMediaPath = path.join(MEDIA_DIR, 'test.mp4')
+    return
+  }
+  cachedMediaFile = file
+  cachedMediaPath = resolved
 }
 
 // ---------------------------------------------------------------------------
@@ -276,9 +287,28 @@ const staticLimiter = rateLimit({
   legacyHeaders: false
 })
 
-app.use(compression())
+app.use(compression({
+  // Don't try to compress already-compressed video streams — wastes CPU
+  filter: (req, res) => req.path.startsWith('/stream') ? false : compression.filter(req, res)
+}))
+
+// Security headers on every response
+app.use((_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff')
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN')
+  res.setHeader('Referrer-Policy', 'same-origin')
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()')
+  if (IS_PRODUCTION) {
+    // Tell browsers to use HTTPS for 2 years once they've seen it once
+    res.setHeader('Strict-Transport-Security', 'max-age=63072000; includeSubDomains')
+  }
+  next()
+})
+
 app.use(sessionParser)
-app.use(express.json())
+// Body parsing scoped to /api only — /stream and static routes never need a JSON body.
+// The 16 kb cap prevents body-size DoS.
+app.use('/api', express.json({ limit: '16kb' }))
 
 // ---------------------------------------------------------------------------
 // CSRF protection – synchronizer token pattern
@@ -389,6 +419,15 @@ app.get('/api/settings', requireAdmin, apiReadLimiter, (_req, res) => {
 
 app.post('/api/settings', requireAdmin, apiWriteLimiter, (req, res) => {
   const incoming = req.body || {}
+
+  // Validate media_file doesn't escape MEDIA_DIR before persisting
+  if (incoming.media_file) {
+    const resolved = path.resolve(MEDIA_DIR, incoming.media_file)
+    if (!resolved.startsWith(MEDIA_DIR + path.sep)) {
+      return res.status(400).json({ error: 'Invalid media file path' })
+    }
+  }
+
   const oldMedia = getSettings().media_file
   const txn = db.transaction(() => {
     for (const [key, value] of Object.entries(incoming)) {
@@ -441,6 +480,18 @@ app.delete('/api/users/:id', requireAdmin, apiWriteLimiter, (req, res) => {
   const result = stmts.deleteUser.run(id)
   if (result.changes === 0) return res.status(404).json({ error: 'User not found' })
   res.json({ ok: true })
+})
+
+// ---------------------------------------------------------------------------
+// API – Media file list (admin only) — lets the admin pick from existing files
+// ---------------------------------------------------------------------------
+app.get('/api/media', requireAdmin, apiReadLimiter, (_req, res) => {
+  try {
+    const files = fs.readdirSync(MEDIA_DIR).filter(f => !f.startsWith('.'))
+    res.json(files)
+  } catch {
+    res.json([])
+  }
 })
 
 // ---------------------------------------------------------------------------
@@ -511,11 +562,28 @@ function broadcastRaw(data) {
 // ---------------------------------------------------------------------------
 const wss = new WebSocketServer({ noServer: true })
 
+// Per-IP connection tracking — cap at 5 simultaneous WS connections per IP.
+// This prevents a single client from exhausting server memory with socket floods.
+const wsClientsByIp = new Map()
+
 // Parse sessions on WS upgrade so we know who the user is
 httpServer.on('upgrade', (req, socket, head) => {
+  const ip = req.socket.remoteAddress || 'unknown'
+  if ((wsClientsByIp.get(ip) ?? 0) >= 5) {
+    socket.write('HTTP/1.1 429 Too Many Connections\r\n\r\n')
+    socket.destroy()
+    return
+  }
+
   sessionParser(req, {}, () => {
     wss.handleUpgrade(req, socket, head, (ws) => {
       ws.user = req.session?.user || null
+      wsClientsByIp.set(ip, (wsClientsByIp.get(ip) ?? 0) + 1)
+      ws.on('close', () => {
+        const n = wsClientsByIp.get(ip) ?? 1
+        if (n <= 1) wsClientsByIp.delete(ip)
+        else wsClientsByIp.set(ip, n - 1)
+      })
       wss.emit('connection', ws, req)
     })
   })
@@ -524,7 +592,14 @@ httpServer.on('upgrade', (req, socket, head) => {
 wss.on('connection', (ws) => {
   ws.send(buildWelcomeFrame())
 
+  // Per-connection message rate limit — max 10 messages/s.
+  // Drops excess silently; prevents chat spam and CPU abuse.
+  let msgCount = 0
+  const msgReset = setInterval(() => { msgCount = 0 }, 1000)
+  ws.on('close', () => clearInterval(msgReset))
+
   ws.on('message', (raw) => {
+    if (++msgCount > 10) return  // rate limit exceeded — drop
     let packet
     try { packet = JSON.parse(raw) } catch { return }
 
@@ -553,8 +628,10 @@ wss.on('connection', (ws) => {
   })
 })
 
-// Heartbeat every second – build the frame once, send same string to all clients
+// Heartbeat every second – build the frame once, send same string to all clients.
+// Skip entirely when no clients are connected to avoid pointless work.
 const heartbeatInterval = setInterval(() => {
+  if (wss.clients.size === 0) return
   buildHeartbeatFrame()
   broadcastRaw(heartbeatFrame)
 }, 1000)

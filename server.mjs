@@ -453,17 +453,24 @@ const connectedUsers = new Map()  // username → socket (logged-in users only)
 // Pending-flag deduplication: rapid connect/disconnect storms collapse to one
 // broadcast per event-loop tick. Zero extra allocations on the hot path.
 let _onlineCountPending = false
+let _onlineCountFrame   = ''
+
+function buildOnlineCountFrame() {
+  _onlineCountFrame = JSON.stringify({
+    type:  'online-count',
+    total: wss.clients.size,
+    users: [...connectedUsers.keys()],
+  })
+}
+
 function broadcastOnlineCount() {
   if (_onlineCountPending) return
   _onlineCountPending = true
   setImmediate(() => {
     _onlineCountPending = false
     if (!wss) return
-    broadcastRaw(JSON.stringify({
-      type:  'online-count',
-      total: wss.clients.size,
-      users: [...connectedUsers.keys()],
-    }))
+    buildOnlineCountFrame()
+    broadcastRaw(_onlineCountFrame)
   })
 }
 

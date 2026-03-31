@@ -1,510 +1,553 @@
-@import 'https://fonts.googleapis.com/css?family=Space+Mono';
+@import 'https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap';
 
-body, html {
-    font-family: 'Space Mono', monospace;
-    letter-spacing: 1px;
-	font-size: 14px;
-    margin: 0;
-    box-sizing: border-box;
+/* ============================================================================
+   Movie Night — Dark Cinema UI
+   Design tokens → reset → layout → components → animations → responsive
+   ============================================================================ */
+
+/* --- Design Tokens --------------------------------------------------------- */
+:root {
+  --bg:          #09090f;
+  --surface:     #10101c;
+  --surface-2:   #17172a;
+  --surface-3:   #20203a;
+  --accent:      #00c8d4;
+  --accent-dim:  rgba(0, 200, 212, 0.12);
+  --accent-glow: 0 0 14px rgba(0, 200, 212, 0.4);
+  --text:        #d4d8ec;
+  --text-dim:    #6868a0;
+  --text-muted:  #2e2e50;
+  --border:      rgba(255, 255, 255, 0.06);
+  --border-acc:  rgba(0, 200, 212, 0.38);
+  --danger:      #f05060;
+  --success:     #22c55e;
+  --radius:      8px;
+  --radius-sm:   4px;
+  --font:        'Space Mono', 'Courier New', monospace;
+  --ease:        0.16s ease;
+  --shadow:      0 4px 20px rgba(0, 0, 0, 0.55);
+  --shadow-lg:   0 8px 48px rgba(0, 0, 0, 0.75);
 }
 
-*, *:before, *:after
-{
-    box-sizing: inherit;
+/* --- Base Reset ------------------------------------------------------------- */
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  font-family: var(--font);
+  font-size: 14px;
+  letter-spacing: 0.35px;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
 }
 
-img { max-width:100%;width: auto; }
+img { max-width: 100%; width: auto; }
 
-main, footer {
-    box-shadow: 0px 0px 10rem -3rem rgba(0,0,0,0.75);
-    padding: 1rem 2rem 0.5rem 2rem;
-    background: rgba(255,255,255,.9);
-}
+/* --- Scrollbars ------------------------------------------------------------- */
+* { scrollbar-width: thin; scrollbar-color: var(--surface-3) transparent; }
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: var(--accent); }
 
-main .app-main-content.row {
-    margin-top: 2em;
-}
+/* --- Main / Footer ---------------------------------------------------------- */
+main, footer { background: transparent; padding: 1rem 2rem 0.5rem; }
+main .app-main-content.row { margin-top: 1.5rem; }
 
-.chat {
-    position: relative;
-    height: 400px;
-    word-wrap: break-word;
-    overflow: scroll;
-}
+/* --- Utility --------------------------------------------------------------- */
+.hidden  { display: none !important; }
+.center  { text-align: center; }
+.full-width { width: 100% !important; }
 
-.chat-box {
-    word-wrap: break-word;
-    overflow: scroll;
-    height: calc( 100% - 2.166rem );
-}
-
-.chat-input {
-    position: absolute;
-    width: 100%;
-    bottom: 0;
-}
-
-.chat-input input {
-    width: 75%;
-}
-
-.chat-input button {
-    width: 25%;
-}
-
-
+/* --- Buttons --------------------------------------------------------------- */
 button {
-    font-family: inherit;
-    border: 2px solid #00C5CD;
-    color: #00C5CD;
-    background: #222;
-    font-weight: bold;
-    padding: 0.2rem .5rem;
-    cursor: pointer;
+  font-family: var(--font);
+  letter-spacing: 0.35px;
+  border: 1px solid var(--border-acc);
+  color: var(--accent);
+  background: transparent;
+  font-weight: bold;
+  padding: 0.3rem 0.7rem;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: background var(--ease), box-shadow var(--ease), color var(--ease);
 }
+button:hover  { background: var(--accent-dim); box-shadow: var(--accent-glow); }
+button:active { transform: translateY(1px); }
+button:focus  { outline: none; }
 
-button:focus { outline:0 !important; }
-
+/* nav "arrow" style */
 .button-alternative {
-    font-family: inherit;
-    border: 0;
-    padding: 0 0 0 1em;
-    color: white;
+  font-family: var(--font);
+  letter-spacing: 0.35px;
+  border: 1px solid var(--border-acc);
+  padding: 0.3rem 0.75rem;
+  color: var(--accent);
+  background: transparent;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  font-weight: bold;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  transition: background var(--ease), box-shadow var(--ease);
 }
-
 .button-alternative .arrow {
-    display: inline-block;
-    line-height: 2.5rem;
-    background: #333;
-    color: white;
-    width: 2.5rem;
-    -webkit-transition: margin 200ms;
-    transition: margin 200ms;
-    margin-left: .75rem;
+  display: inline-block;
+  font-size: 0.75em;
+  transition: transform var(--ease);
 }
 .button-alternative:hover {
-    background: white;
-    border-left: 2px solid #262626;
-    color: #222;
+  background: var(--accent-dim);
+  box-shadow: var(--accent-glow);
+  border-color: var(--accent);
 }
-.button-alternative:hover .arrow {
-    margin-left: 1.25em;
-    background-color: #262626;
+.button-alternative:hover .arrow { transform: translateX(3px); }
+.button-alternative:active { transform: translateY(1px); }
+.button-alternative:focus  { outline: none; }
+
+/* --- Form Inputs ----------------------------------------------------------- */
+input:focus, textarea:focus { outline: none; }
+
+input[type=text],
+input[type=password],
+textarea {
+  font-family: var(--font);
+  font-size: 0.9rem;
+  letter-spacing: 0.35px;
+  background: var(--surface-3);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.4rem 0.6rem;
+  transition: border-color var(--ease), box-shadow var(--ease);
 }
-.button-alternative:active {
-    background: #ccc;
+input[type=text]:focus,
+input[type=password]:focus,
+textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-dim);
 }
-.button-alternative:active .arrow {
-    margin-left: 1.5em;
-}
+input[type=text]::placeholder,
+input[type=password]::placeholder  { color: var(--text-muted); }
 
-input:focus, textarea:focus {
-    outline: 0;
-}
+/* --- Dead Simple Grid (c) 2015 Vladimir Agafonkin -------------------------  */
+.row .row   { margin: 0 -1.5em; }
+.column     { padding: 0 1.5em; }
+.row::after { content: ""; clear: both; display: table; }
+@media only screen { .column { float: left; width: 100%; } }
 
-input[type=text], textarea {
-    font-family: inherit;
-    font-size: 1.2rem;
-    border: 0;
-    border-bottom: 2px solid black;
-}
+.container { margin: 0 auto; max-width: 1060px; padding: 1em 0; }
 
-.info-message-container {
-    width: calc( 100% - 2rem );
-    background: #00FF34;
-    height: 72px;
-    display: inline-block;
-    padding: 1rem;
-    font-weight: bold;
-    font-size: 2rem;
-    margin: 1rem 0 0 1rem;
-    display: none;
-}
-
-button.close-button {
-    float: right;
-    height: 20px;
-    width: 20px;
-    border: 0;
-    color: white;
-    position: relative;
-    top: calc( 50% - 10px);
-}
-
-button.close-button::before {
-    content: "x";
-    display: block;
-    font-size: 0.9rem;
-    position: absolute;
-    top: 0;
-    left: calc( 50% - 0.5ch );
-}
-
-/*  dynamic elements  */
-
-.chat-message {
-    font-family: monospace;
-}
-
-.chat-message-owner {
-    background: black;
-    color: white;
-    text-shadow: 0 0 2px white;
-}
-.chat-message-owner::after {
-    content: ":"
-}
-
-footer pre {
-    opacity: 0;
-    font-size: .8rem;
-    text-align: center;
-}
-
-footer:hover pre{
-    opacity: 1;
-}
-
-.background-funstuff {
-    position: absolute;
-    z-index: -1;
-}
-
-/* video */
-.video-container {
-    position: relative;
-}
-
-
-video {
-    width: 100%;
-    height: 100%;
-    height: 400px;
-    -webkit-filter: drop-shadow(0 0 0.7rem rgba(22,22,22, 0.4));
-    filter: drop-shadow(0 0 0.7rem rgba(22,22,22, 0.4));
-}
-
-/* disable fullscreen controls */
-video::-webkit-media-controls {
-  display:none !important;
-}
-
-.video-controls {
-    position: absolute;
-    z-index: 17;
-}
-
-.play-pause-container {
-    left: calc( 50% - 16px );
-    top: 50%;
-    width: 72px;
-    height: 72px;
-    margin-left: -26px;
-    margin-top: -26px;
-    background: rgba(0,0,0,.5);
-    border-radius: 100%;
-    pointer-events: none;
-}
-
-.play, .pause {
-    width: 36px;
-    height: 64px;
-    margin: 6px 8px 8px 17px;
-}
-
-.pause {
-    display: none;
-}
-
-button.fullscreen {
-    left: 30%;
-    width: 40%;
-    bottom: 0;
-    font-weight: 100;
-    background: white;
-    border: 0;
-    color: black;
-    font-size: 1.5rem;
-    display: none;
-}
-
-.video-container:hover button.video-controls.fullscreen {
-    display: initial;
-}
-
-/* @Todo: move imports somewhere else */ 
-/* Dead Simple Grid (c) 2015 Vladimir Agafonkin */
-
-.row .row { margin:  0 -1.5em; }
-.column      { padding: 0  1.5em; }
-
-.row:after {
-    content: "";
-    clear: both;
-    display: table;
-}
-
-@media only screen { .column {
-    float: left;
-    width: 100%;
-}}
-
-/* Grid setup */ 
-
-.container{
-    margin: 0 auto;
-    max-width: 960px;
-    padding: 1em 0;
-}
-
-@media only screen and (min-width: 34em) {
-    .column-mobile-1-2 { width: 50%; }
-}
-
+@media only screen and (min-width: 34em) { .column-mobile-1-2  { width: 50%; } }
 @media only screen and (min-width: 54em) {
-    .container-medium-75vw { width: 75vw; }
-    .column-medium-2-3 { width: 66.66%; }
-    .column-medium-1-3 { width: 33.33%; }
+  .container-medium-75vw { max-width: 78vw; }
+  .column-medium-2-3     { width: 66.66%; }
+  .column-medium-1-3     { width: 33.33%; }
 }
-
 @media only screen and (min-width: 76em) {
-    .column-large-5-12 { width: 41.66%; }
-    .column-large-7-12 { width: 58.33%; }
+  .column-large-5-12 { width: 41.66%; }
+  .column-large-7-12 { width: 58.33%; }
 }
 
-.center {
-    text-align: center;
-}
-
-.full-width {
-    width: 100% !important;
-}
-
-
-/* Animations */
-
-@-webkit-keyframes bounceIn {
-  from, 20%, 40%, 60%, 80%, to {
-    -webkit-animation-timing-function: cubic-bezier(0.215, 0.610, 0.355, 1.000);
-    animation-timing-function: cubic-bezier(0.215, 0.610, 0.355, 1.000);
-  }
-
-  0% {
-    opacity: 0;
-    -webkit-transform: scale3d(.3, .3, .3);
-    transform: scale3d(.3, .3, .3);
-  }
-
-  20% {
-    -webkit-transform: scale3d(1.1, 1.1, 1.1);
-    transform: scale3d(1.1, 1.1, 1.1);
-  }
-
-  40% {
-    -webkit-transform: scale3d(.9, .9, .9);
-    transform: scale3d(.9, .9, .9);
-  }
-
-  60% {
-    opacity: 1;
-    -webkit-transform: scale3d(1.03, 1.03, 1.03);
-    transform: scale3d(1.03, 1.03, 1.03);
-  }
-
-  80% {
-    -webkit-transform: scale3d(.97, .97, .97);
-    transform: scale3d(.97, .97, .97);
-  }
-
-  to {
-    opacity: 1;
-    -webkit-transform: scale3d(1, 1, 1);
-    transform: scale3d(1, 1, 1);
-  }
-}
-
-@keyframes bounceIn {
-  from, 20%, 40%, 60%, 80%, to {
-    -webkit-animation-timing-function: cubic-bezier(0.215, 0.610, 0.355, 1.000);
-    animation-timing-function: cubic-bezier(0.215, 0.610, 0.355, 1.000);
-  }
-
-  0% {
-    opacity: 0;
-    -webkit-transform: scale3d(.3, .3, .3);
-    transform: scale3d(.3, .3, .3);
-  }
-
-  20% {
-    -webkit-transform: scale3d(1.1, 1.1, 1.1);
-    transform: scale3d(1.1, 1.1, 1.1);
-  }
-
-  40% {
-    -webkit-transform: scale3d(.9, .9, .9);
-    transform: scale3d(.9, .9, .9);
-  }
-
-  60% {
-    opacity: 1;
-    -webkit-transform: scale3d(1.03, 1.03, 1.03);
-    transform: scale3d(1.03, 1.03, 1.03);
-  }
-
-  80% {
-    -webkit-transform: scale3d(.97, .97, .97);
-    transform: scale3d(.97, .97, .97);
-  }
-
-  to {
-    opacity: 1;
-    -webkit-transform: scale3d(1, 1, 1);
-    transform: scale3d(1, 1, 1);
-  }
-}
-
-.bounceIn {
-  -webkit-animation-name: bounceIn;
-  animation-name: bounceIn;
-}
-
-@-webkit-keyframes zoomIn {
-  from {
-    opacity: 1;
-  }
-
-  100% {
-    opacity: 0;
-    -webkit-transform: scale3d(1.3, 1.3, 1.3);
-    transform: scale3d(1.3, 1.3, 1.3);
-  }
-}
-
-@keyframes zoomIn {
-  from {
-    opacity: 1;
-  }
-
-  100% {
-    opacity: 0;
-    -webkit-transform: scale3d(1.3, 1.3, 1.3);
-    transform: scale3d(1.3, 1.3, 1.3);
-  }
-}
-
-.zoomIn {
-  -webkit-animation-name: zoomIn;
-  animation-name: zoomIn;
-}
-
-.animated {
-  -webkit-animation-duration: 1s;
-  animation-duration: 1s;
-  -webkit-animation-fill-mode: both;
-  animation-fill-mode: both;
-}
-
-.animated.infinite {
-  -webkit-animation-iteration-count: infinite;
-  animation-iteration-count: infinite;
-}
-/* ---------------------------------------------------------------------------
-   Modern additions – navbar, modal, admin panel, auth UI
-   --------------------------------------------------------------------------- */
-
-.hidden { display: none !important; }
-
-/* Navbar */
+/* --- Navbar ---------------------------------------------------------------- */
 .navbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.5rem 0;
-  border-bottom: 2px solid #00C5CD;
-  margin-bottom: 1rem;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid var(--border-acc);
+  margin-bottom: 1.25rem;
 }
-
 .navbar .banner {
-  max-height: 60px;
+  max-height: 52px;
   width: auto;
+  filter: drop-shadow(0 0 10px rgba(0, 200, 212, 0.35));
 }
-
-.nav-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-}
-
+.nav-actions { display: flex; align-items: center; gap: 0.65rem; }
 .nav-user {
   font-weight: bold;
-  color: #00C5CD;
+  color: var(--accent);
+  font-size: 0.82rem;
+  letter-spacing: 1px;
 }
 
-/* Login modal */
+/* --- WS dot ---------------------------------------------------------------- */
+.ws-dot {
+  display: inline-block;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex-shrink: 0;
+}
+.ws-dot--online     { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+.ws-dot--offline    { background: var(--danger); }
+.ws-dot--connecting { background: #f59e0b; animation: pulse-dot 1s ease infinite; }
+
+@keyframes pulse-dot { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
+
+/* --- Online count ---------------------------------------------------------- */
+.online-count {
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  letter-spacing: 0.5px;
+  cursor: default;
+}
+
+/* --- Video container ------------------------------------------------------- */
+.video-container {
+  position: relative;
+  background: #000;
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: var(--shadow-lg);
+}
+
+video {
+  width: 100%;
+  height: 400px;
+  display: block;
+  object-fit: contain;
+  background: #000;
+}
+video::-webkit-media-controls { display: none !important; }
+
+/* Play / pause overlay */
+.video-controls { position: absolute; z-index: 17; }
+
+.play-pause-container {
+  left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  width: 64px; height: 64px;
+  background: rgba(0, 0, 0, 0.6);
+  border-radius: 50%;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(4px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+.play, .pause {
+  width: 28px; height: 28px;
+  display: flex; align-items: center; justify-content: center;
+}
+.pause { display: none; }
+
+/* Fullscreen button */
+button.fullscreen {
+  right: 8px;
+  bottom: 52px;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 0.72rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: var(--radius-sm);
+  display: none;
+  backdrop-filter: blur(4px);
+  font-family: var(--font);
+  font-weight: normal;
+}
+.video-container:hover button.video-controls.fullscreen { display: initial; }
+button.fullscreen:hover {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: #fff;
+  box-shadow: var(--accent-glow);
+}
+
+/* --- Volume control ------------------------------------------------------- */
+.volume-control {
+  bottom: 44px; right: 48px;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: rgba(0, 0, 0, 0.65);
+  padding: 0.25rem 0.65rem;
+  border-radius: 20px;
+  opacity: 0;
+  transition: opacity var(--ease);
+  pointer-events: none;
+  backdrop-filter: blur(6px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+.video-container:hover .volume-control { opacity: 1; pointer-events: auto; }
+
+.volume-icon {
+  background: none; border: none; padding: 0;
+  font-size: 0.9rem; cursor: pointer;
+  color: rgba(255, 255, 255, 0.85); line-height: 1;
+}
+.volume-icon:hover { background: none; box-shadow: none; color: var(--accent); }
+
+.volume-slider {
+  width: 62px; cursor: pointer;
+  accent-color: var(--accent);
+  vertical-align: middle;
+}
+
+/* --- Video progress bar --------------------------------------------------- */
+.video-progress {
+  position: relative;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  cursor: default;
+  transition: height var(--ease);
+}
+.video-progress:hover,
+.video-progress.admin-seekable { height: 7px; }
+.video-progress.admin-seekable { cursor: pointer; }
+
+.video-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  width: 0%;
+  transition: width 0.22s linear;
+  box-shadow: 0 0 6px rgba(0, 200, 212, 0.55);
+}
+
+.video-progress-time {
+  position: absolute;
+  right: 6px;
+  bottom: calc(100% + 4px);
+  font-size: 0.62rem;
+  color: rgba(255, 255, 255, 0.65);
+  background: rgba(0, 0, 0, 0.55);
+  padding: 0.1rem 0.35rem;
+  border-radius: 3px;
+  pointer-events: none;
+  white-space: nowrap;
+  font-family: var(--font);
+}
+
+/* --- Keyboard hints ------------------------------------------------------- */
+.kbd-hints {
+  font-size: 0.6rem;
+  color: var(--text-muted);
+  margin-top: 0.3rem;
+  letter-spacing: 0.2px;
+  display: none;
+}
+kbd {
+  display: inline-block;
+  border: 1px solid var(--surface-3);
+  border-radius: 3px;
+  padding: 0 0.28em;
+  font-size: 0.82em;
+  background: var(--surface-2);
+  color: var(--text-dim);
+  font-family: var(--font);
+}
+
+/* --- Chat ------------------------------------------------------------------ */
+.chat {
+  height: 400px;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.chat-box {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.65rem 0.75rem;
+  word-break: break-word;
+}
+
+.chat-input {
+  display: flex;
+  border-top: 1px solid var(--border);
+  background: var(--surface-2);
+}
+.chat-input input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 0.5rem 0.75rem;
+  color: var(--text);
+  font-size: 0.88rem;
+}
+.chat-input input:focus { box-shadow: none; border-color: transparent; }
+.chat-input button {
+  border: none;
+  border-left: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  color: var(--accent);
+  padding: 0.5rem 0.9rem;
+  font-size: 0.75rem;
+}
+.chat-input button:hover { background: var(--accent-dim); box-shadow: none; }
+
+/* Typing indicator */
+.typing-indicator {
+  font-size: 0.66rem;
+  color: var(--text-dim);
+  font-style: italic;
+  min-height: 1rem;
+  padding: 0.18rem 0.75rem;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  margin: 0;
+}
+
+/* Chat messages */
+.chat-message {
+  font-size: 0.83rem;
+  padding: 0.12rem 0;
+  line-height: 1.55;
+  font-family: var(--font);
+}
+
+.chat-message-owner {
+  background: var(--surface-3);
+  color: var(--accent);
+  border-radius: 3px;
+  padding: 0 0.28em;
+  font-size: 0.76rem;
+  font-weight: bold;
+  letter-spacing: 0.5px;
+}
+.chat-message-owner::after { content: ":"; }
+
+.chat-message-owner--dm { cursor: pointer; text-decoration: underline dotted; }
+.chat-message-owner--dm:hover { background: var(--accent); color: var(--bg); }
+
+.chat-message-time {
+  font-size: 0.59rem;
+  color: var(--text-muted);
+  margin-left: 0.4em;
+  opacity: 0;
+  transition: opacity 0.12s;
+  pointer-events: none;
+}
+.chat-message:hover .chat-message-time { opacity: 1; }
+
+/* MOTD banner */
+.motd {
+  display: block;
+  font-size: 0.76rem;
+  color: var(--text-dim);
+  padding: 0.3rem 0.55rem;
+  border-left: 2px solid var(--accent);
+  margin-bottom: 0.55rem;
+  font-style: italic;
+  background: var(--accent-dim);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+/* --- Login Modal ----------------------------------------------------------- */
 .modal {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.6);
+  background: rgba(0, 0, 0, 0.72);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 100;
+  backdrop-filter: blur(5px);
 }
-
 .modal-box {
-  background: #fff;
+  background: var(--surface);
+  border: 1px solid var(--border-acc);
   padding: 2rem;
-  min-width: 320px;
-  box-shadow: 0 0 2rem rgba(0,0,0,0.5);
+  min-width: 340px;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
 }
-
 .modal-box h2 {
   margin: 0 0 1.5rem;
-  color: #222;
+  color: var(--text);
+  font-size: 1rem;
+  letter-spacing: 2.5px;
+  text-transform: uppercase;
 }
-
-/* Form helpers */
-.form-actions {
-  position: relative;
-  margin-top: 1.5rem;
-  min-height: 2.5rem;
+.modal-box fieldset {
+  border: none; padding: 0; margin: 0 0 1rem;
 }
-
-.form-error {
-  color: #c0392b;
-  font-size: 0.9rem;
-  margin-top: 0.5rem;
+.modal-box legend {
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: var(--text-dim);
+  margin-bottom: 0.3rem;
+  padding: 0;
 }
+.modal-box input { width: 100%; }
 
-.form-feedback {
-  margin-top: 0.5rem;
-  font-size: 0.9rem;
-}
+.form-actions { margin-top: 1.25rem; }
+.form-error { color: var(--danger); font-size: 0.8rem; margin-top: 0.45rem; }
+.form-feedback { margin-top: 0.45rem; font-size: 0.8rem; }
+.form-feedback.success { color: var(--success); }
+.form-feedback.error   { color: var(--danger); }
 
-.form-feedback.success { color: #27ae60; }
-.form-feedback.error   { color: #c0392b; }
-
-/* Admin panel */
-.admin-panel {
-  padding: 1rem 0;
-}
+/* --- Admin Panel ----------------------------------------------------------- */
+.admin-panel { padding: 1rem 0 3rem; }
 
 .admin-panel h2 {
-  border-bottom: 2px solid #00C5CD;
-  padding-bottom: 0.5rem;
-  margin-bottom: 1.5rem;
+  color: var(--text);
+  border-bottom: 1px solid var(--border-acc);
+  padding-bottom: 0.7rem;
+  margin-bottom: 1.75rem;
+  font-size: 0.9rem;
+  letter-spacing: 3px;
+  text-transform: uppercase;
 }
 
 .admin-section {
-  margin-bottom: 2.5rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.5rem;
+  margin-bottom: 1.25rem;
 }
-
 .admin-section h3 {
-  margin-bottom: 1rem;
-  color: #555;
+  margin: 0 0 1.2rem;
+  color: var(--accent);
   text-transform: uppercase;
-  font-size: 0.85rem;
-  letter-spacing: 2px;
+  font-size: 0.68rem;
+  letter-spacing: 2.5px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.55rem;
+}
+.admin-section fieldset { border: none; padding: 0; margin: 0 0 1rem; }
+.admin-section legend {
+  font-size: 0.66rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 0.28rem;
+  padding: 0;
+}
+.admin-section input[type=text],
+.admin-section input[type=password],
+.admin-section textarea,
+.admin-section select {
+  width: 100%;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.4rem 0.6rem;
+  font-family: var(--font);
+  font-size: 0.9rem;
+}
+.admin-section select {
+  cursor: pointer;
+  appearance: auto;
+}
+.admin-section select:focus,
+.admin-section input:focus,
+.admin-section textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-dim);
+  outline: none;
 }
 
 /* Users table */
@@ -512,343 +555,184 @@ button.fullscreen {
   width: 100%;
   border-collapse: collapse;
   margin-bottom: 1.5rem;
-  font-size: 0.9rem;
+  font-size: 0.8rem;
 }
-
 .users-table th,
-.users-table td {
-  text-align: left;
-  padding: 0.4rem 0.75rem;
-  border-bottom: 1px solid #eee;
-}
-
+.users-table td { text-align: left; padding: 0.48rem 0.75rem; border-bottom: 1px solid var(--border); }
 .users-table th {
-  font-weight: bold;
-  color: #555;
-  border-bottom: 2px solid #00C5CD;
+  color: var(--text-dim);
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  border-bottom: 1px solid var(--border-acc);
 }
+.users-table tr:hover td { background: var(--surface-2); }
 
 .btn-delete {
-  font-size: 0.8rem;
-  padding: 0.1rem 0.4rem;
-  border-color: #c0392b;
-  color: #c0392b;
+  font-size: 0.7rem;
+  padding: 0.15rem 0.4rem;
+  border-color: var(--danger);
+  color: var(--danger);
 }
+.btn-delete:hover { background: rgba(240, 80, 96, 0.12); box-shadow: 0 0 8px rgba(240, 80, 96, 0.25); }
 
 /* Add-user form inline */
 .add-user-form fieldset {
-  display: flex;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-  align-items: center;
+  display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: flex-end;
+  border: none; padding: 0;
 }
-
 .add-user-form input,
-.add-user-form select {
-  font-family: inherit;
-  font-size: 1rem;
-  border: 0;
-  border-bottom: 2px solid black;
-  padding: 0.2rem;
-  flex: 1;
-  min-width: 120px;
-}
+.add-user-form select { flex: 1; min-width: 110px; }
 
-.add-user-form select {
-  background: #fff;
-  cursor: pointer;
-}
-
-/* Footer image */
-.footer-img {
-  display: block;
-  margin: 0 auto;
-  max-width: 960px;
-  width: 100%;
-}
-
-/* Info toast – replaces the old .info-message-container */
+/* --- Toast ----------------------------------------------------------------- */
 .info-message-container {
   position: fixed;
   bottom: 1.5rem;
   left: 50%;
   transform: translateX(-50%);
-  background: #00FF34;
-  padding: 0.75rem 1.5rem;
-  font-weight: bold;
-  font-size: 1.2rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border-acc);
+  color: var(--text);
+  padding: 0.6rem 1.2rem;
+  font-size: 0.82rem;
   display: flex;
   align-items: center;
   gap: 1rem;
-  box-shadow: 0 4px 1rem rgba(0,0,0,0.2);
+  box-shadow: var(--shadow);
   z-index: 200;
+  border-radius: var(--radius);
+  max-width: 480px;
+  width: max-content;
+  backdrop-filter: blur(8px);
 }
 
-/* WebSocket connection status dot */
-.ws-dot {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #888;
-  flex-shrink: 0;
+button.close-button {
+  background: none; border: none;
+  color: var(--text-dim); font-size: 1rem; cursor: pointer;
+  padding: 0; line-height: 1; flex-shrink: 0;
 }
-.ws-dot--online      { background: #00C5CD; }
-.ws-dot--offline     { background: #c0392b; }
-.ws-dot--connecting  { background: #f39c12; }
+button.close-button:hover { color: var(--text); box-shadow: none; }
+button.close-button::before { content: "×"; display: block; }
 
-/* Footer centre alignment (replaces deprecated <center>) */
-.footer-center {
+/* --- Background canvas ----------------------------------------------------- */
+.background-funstuff {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0.22;
+}
+
+/* --- Footer ---------------------------------------------------------------- */
+footer {
   text-align: center;
+  padding: 0.75rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.68rem;
 }
-
-/* Video progress bar — always visible below the video */
-.video-progress {
-  position: relative;
-  height: 5px;
-  background: rgba(0,0,0,0.15);
-  cursor: default;
-  margin-top: 3px;
-}
-
-/* Admins get a taller, clickable seek bar */
-.video-progress.admin-seekable {
-  height: 9px;
-  cursor: pointer;
-}
-
-.video-progress-fill {
-  height: 100%;
-  background: #00C5CD;
-  width: 0%;
-  transition: width 0.5s linear;
-}
-
-/* Floating time label, top-right of the bar */
-.video-progress-time {
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + 3px);
-  font-size: 0.7rem;
-  color: white;
-  background: rgba(0,0,0,0.6);
-  padding: 0.1rem 0.3rem;
-  pointer-events: none;
-  white-space: nowrap;
-}
-
-/* ---------------------------------------------------------------------------
-   Online count badge
-   --------------------------------------------------------------------------- */
-.online-count {
-  font-size: 0.72rem;
-  color: #00C5CD;
-  font-weight: bold;
-  letter-spacing: 0.5px;
-  cursor: default;
-}
-
-/* ---------------------------------------------------------------------------
-   Chat message timestamp — visible on hover
-   --------------------------------------------------------------------------- */
-.chat-message-time {
-  font-size: 0.62rem;
-  color: #aaa;
-  margin-left: 0.5em;
+footer pre {
+  color: var(--text-muted);
+  font-size: 0.68rem;
   opacity: 0;
-  transition: opacity 0.15s;
-  pointer-events: none;
-  font-style: normal;
-}
-.chat-message:hover .chat-message-time {
-  opacity: 1;
-}
-
-/* Clickable username (DM trigger) */
-.chat-message-owner--dm {
-  cursor: pointer;
-  text-decoration: underline dotted;
-}
-.chat-message-owner--dm:hover {
-  background: #00C5CD;
-  color: #fff;
-}
-
-/* ---------------------------------------------------------------------------
-   Typing indicator
-   --------------------------------------------------------------------------- */
-.typing-indicator {
-  font-size: 0.72rem;
-  color: #888;
-  font-style: italic;
-  min-height: 1.1rem;
-  padding: 0 0.25rem;
+  transition: opacity 0.2s;
   margin: 0;
 }
+footer:hover pre { opacity: 1; }
+.footer-img { display: block; margin: 0 auto; max-width: 1060px; width: 100%; opacity: 0.7; }
+.footer-center { text-align: center; }
 
-/* ---------------------------------------------------------------------------
-   P2P DM panel — fixed overlay, bottom-right corner
-   --------------------------------------------------------------------------- */
+/* --- DM Panel -------------------------------------------------------------- */
 .dm-panel {
   position: fixed;
-  bottom: 1.5rem;
-  right: 1.5rem;
-  width: 320px;
-  max-height: 420px;
-  background: #fff;
-  border: 2px solid #00C5CD;
-  box-shadow: 0 4px 2rem rgba(0, 0, 0, 0.25);
-  display: flex;
-  flex-direction: column;
+  bottom: 1.5rem; right: 1.5rem;
+  width: 320px; max-height: 420px;
+  background: var(--surface);
+  border: 1px solid var(--border-acc);
+  box-shadow: var(--shadow-lg);
+  display: flex; flex-direction: column;
   z-index: 300;
-  font-size: 0.9rem;
+  font-size: 0.88rem;
+  border-radius: var(--radius);
+  overflow: hidden;
 }
-
 .dm-panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  display: flex; align-items: center; justify-content: space-between;
   padding: 0.5rem 0.75rem;
-  background: #00C5CD;
-  color: #fff;
-  font-weight: bold;
-  font-size: 0.85rem;
+  background: var(--surface-3);
+  border-bottom: 1px solid var(--border);
+  color: var(--accent);
+  font-weight: bold; font-size: 0.8rem;
 }
-
 .dm-close-btn {
-  background: none;
-  border: none;
-  color: #fff;
-  font-size: 1.2rem;
-  line-height: 1;
-  cursor: pointer;
-  padding: 0 0.2rem;
+  background: none; border: none;
+  color: var(--text-dim); font-size: 1.1rem; cursor: pointer;
+  padding: 0 0.2rem; line-height: 1;
 }
-.dm-close-btn:hover { color: #222; }
+.dm-close-btn:hover { color: var(--text); box-shadow: none; }
 
 .dm-messages {
-  flex: 1;
-  overflow-y: auto;
+  flex: 1; overflow-y: auto;
   padding: 0.5rem 0.75rem;
   min-height: 120px;
-  max-height: 280px;
 }
+.dm-message { margin: 0.2rem 0; font-size: 0.8rem; word-break: break-word; }
+.dm-message--mine .chat-message-owner { background: var(--accent); color: var(--bg); }
 
-.dm-message {
-  margin: 0.2rem 0;
-  font-family: monospace;
-  word-break: break-word;
-}
-
-.dm-message--mine .chat-message-owner {
-  background: #00C5CD;
-}
-
-.dm-input-row {
-  display: flex;
-  border-top: 1px solid #eee;
-}
-
+.dm-input-row { display: flex; border-top: 1px solid var(--border); }
 .dm-input-row input {
-  flex: 1;
-  border: none;
-  padding: 0.4rem 0.6rem;
-  font-size: 0.9rem;
-  font-family: inherit;
+  flex: 1; border: none;
+  background: var(--surface-2);
+  padding: 0.45rem 0.65rem;
+  font-size: 0.84rem; font-family: var(--font); color: var(--text);
+  border-radius: 0;
 }
-
+.dm-input-row input:focus { box-shadow: none; border-color: transparent; }
 .dm-input-row .chat-button {
-  border: none;
-  border-left: 1px solid #eee;
-  background: #222;
-  color: #00C5CD;
-  padding: 0.4rem 0.75rem;
-  font-weight: bold;
-  cursor: pointer;
-  font-family: inherit;
+  border: none; border-left: 1px solid var(--border);
+  background: transparent; color: var(--accent);
+  padding: 0.45rem 0.75rem; font-weight: bold; cursor: pointer;
+  font-family: var(--font); font-size: 0.75rem; border-radius: 0;
 }
-.dm-input-row .chat-button:hover { background: #00C5CD; color: #fff; }
+.dm-input-row .chat-button:hover { background: var(--accent-dim); box-shadow: none; }
 
 @media only screen and (max-width: 420px) {
   .dm-panel { width: calc(100vw - 2rem); right: 1rem; }
 }
 
-/* ---------------------------------------------------------------------------
-   Volume control — appears on video hover, keyboard shortcut M
-   --------------------------------------------------------------------------- */
-.volume-control {
-  bottom: 28px;
-  right: 0;
-  display: flex;
-  align-items: center;
-  gap: 0.3rem;
-  background: rgba(0, 0, 0, 0.65);
-  padding: 0.2rem 0.5rem;
-  border-radius: 3px;
-  opacity: 0;
-  transition: opacity 0.2s;
-  pointer-events: none;
+/* --- Animations ------------------------------------------------------------ */
+@keyframes bounceIn {
+  0%   { opacity: 0; transform: scale(0.35); }
+  55%  { opacity: 1; transform: scale(1.04); }
+  80%  { transform: scale(0.97); }
+  100% { opacity: 1; transform: scale(1); }
+}
+@keyframes zoomIn {
+  from { opacity: 1; }
+  100% { opacity: 0; transform: scale(1.3); }
+}
+@keyframes slideInUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
-.video-container:hover .volume-control {
-  opacity: 1;
-  pointer-events: auto;
-}
+.bounceIn { animation-name: bounceIn; }
+.zoomIn   { animation-name: zoomIn; }
 
-.volume-icon {
-  background: none;
-  border: none;
-  padding: 0;
-  font-size: 1rem;
-  cursor: pointer;
-  color: white;
-  line-height: 1;
+.animated {
+  animation-duration: 0.55s;
+  animation-fill-mode: both;
 }
+.animated.infinite { animation-iteration-count: infinite; }
 
-.volume-slider {
-  width: 64px;
-  cursor: pointer;
-  accent-color: #00C5CD;
-  vertical-align: middle;
-}
-
-/* ---------------------------------------------------------------------------
-   Keyboard shortcut hint strip — admin only, below video
-   --------------------------------------------------------------------------- */
-.kbd-hints {
-  font-size: 0.65rem;
-  color: #aaa;
-  margin-top: 0.25rem;
-  letter-spacing: 0.3px;
-  display: none;
-}
-
-.admin-seekable ~ .kbd-hints,
-.admin-seekable + * .kbd-hints {
-  display: block;
-}
-
-kbd {
-  display: inline-block;
-  border: 1px solid #bbb;
-  border-radius: 2px;
-  padding: 0 0.25em;
-  font-size: 0.8em;
-  background: #f5f5f5;
-  color: #333;
-}
-
-/* ---------------------------------------------------------------------------
-   Responsive: stack video above chat on small screens
-   --------------------------------------------------------------------------- */
+/* --- Responsive ------------------------------------------------------------- */
 @media only screen and (max-width: 54em) {
   .app-main-content.row > .column {
     float: none;
     width: 100%;
   }
-
   .chat {
-    height: 260px;
+    height: 280px;
     margin-top: 1rem;
   }
+  video { height: 240px; }
 }

@@ -432,6 +432,18 @@ function initVolumeControl() {
   video.addEventListener('volumechange', updateVolumeUI)
 }
 
+// rAF-driven progress loop — runs only while the video is playing.
+// Smooth scrubbing at display refresh rate instead of ~4 Hz timeupdate.
+let _rafId = 0
+function startProgressLoop() {
+  if (_rafId) return
+  ;(function tick() { updateProgress(); _rafId = requestAnimationFrame(tick) })()
+}
+function stopProgressLoop() {
+  if (_rafId) { cancelAnimationFrame(_rafId); _rafId = 0 }
+  updateProgress()  // final position update
+}
+
 function initVideo() {
   const container = $('.video-container')
   const video = $('video')
@@ -463,9 +475,12 @@ function initVideo() {
     else if (video.webkitRequestFullScreen) video.webkitRequestFullScreen()
   })
 
-  // Progress bar: update every timeupdate (fires ~4×/s during playback)
-  video.addEventListener('timeupdate', updateProgress)
+  // Progress bar: rAF loop during playback; single update on metadata/seek
+  video.addEventListener('play',          startProgressLoop)
+  video.addEventListener('pause',         stopProgressLoop)
+  video.addEventListener('ended',         stopProgressLoop)
   video.addEventListener('loadedmetadata', updateProgress)
+  video.addEventListener('seeked',         updateProgress)
 
   // Admin: click on progress bar to seek
   $('#video-progress')?.addEventListener('click', (e) => {
@@ -831,13 +846,9 @@ $('#change-password-form')?.addEventListener('submit', async (e) => {
 // ---------------------------------------------------------------------------
 // Utility
 // ---------------------------------------------------------------------------
-function escapeHtml(str) {
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-}
+// Single-pass lookup-table escape — one regex, one allocation, no chained replaces.
+const _esc = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }
+function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => _esc[c]) }
 
 // ---------------------------------------------------------------------------
 // Bootstrap

@@ -40,17 +40,25 @@ function formatTime(secs) {
     : `${m}:${String(sec).padStart(2, '0')}`
 }
 
+// Fixed-point integer comparison avoids redundant DOM writes and toFixed() string allocation.
+// pct100 is 0–10000 (two decimal places of precision).
+let _lastProgressPct100 = -1
+
 function updateProgress() {
   const video = $('video')
   const fill  = $('#video-progress-fill')
   const label = $('#video-progress-time')
   if (!video || !fill) return
   const dur = video.duration
-  if (dur && dur > 0) {
-    fill.style.width = `${(video.currentTime / dur * 100).toFixed(2)}%`
+  if (dur > 0) {
+    const pct100 = (video.currentTime / dur * 10000 | 0)
+    if (pct100 !== _lastProgressPct100) {
+      _lastProgressPct100 = pct100
+      fill.style.width = (pct100 / 100) + '%'
+    }
     if (label) label.textContent = `${formatTime(video.currentTime)} / ${formatTime(dur)}`
   } else {
-    fill.style.width = '0%'
+    if (_lastProgressPct100 !== 0) { _lastProgressPct100 = 0; fill.style.width = '0%' }
     if (label) label.textContent = formatTime(video.currentTime)
   }
 }
@@ -101,6 +109,7 @@ function connectWebSocket() {
       case 'welcome':         handleWelcome(packet.message); break
       case 'heartbeat':       handleHeartbeat(packet.message); break
       case 'authoritative':   handleAuthoritative(packet.message); break
+      case 'play-pause':      handlePlayPause(packet); break
       case 'incoming-chat-message': appendChatMessage(packet.message); break
       case 'chat-history':    handleChatHistory(packet); break
       case 'online-count':    handleOnlineCount(packet); break
@@ -134,7 +143,10 @@ function handleWelcome(msg) {
   state.serverLaunchTime = new Date(msg['server-launch-time'])
   $('#motd').textContent = msg['message-of-the-day'] || ''
   const video = $('video')
-  if (video) video.currentTime = msg['video-seek-time'] || 0
+  if (video) {
+    video.currentTime = msg['video-seek-time'] || 0
+    if (msg.playing) video.play().catch(() => {})
+  }
 }
 
 function handleHeartbeat(msg) {
@@ -166,6 +178,15 @@ function handleAuthoritative(msg) {
   displayToast('Loaded new movie!')
 }
 
+function handlePlayPause(msg) {
+  if (state.user?.role === 'admin') return  // admin drives their own player
+  const video = $('video')
+  if (!video) return
+  video.currentTime = msg['video-seek-time'] || 0
+  if (msg.playing) video.play().catch(() => {})
+  else video.pause()
+}
+
 function handleChatMessage(msg) {
   appendChatMessage(msg)
 }
@@ -173,8 +194,9 @@ function handleChatMessage(msg) {
 // ---------------------------------------------------------------------------
 // Shared chat message renderer — used for both live messages and history replay
 // ---------------------------------------------------------------------------
-function appendChatMessage(msg, prepend = false) {
-  const box = $('#chat-box')
+
+// Build a <p> DOM node for a single chat message. Pure function — no side effects.
+function buildChatMessageNode(msg) {
   const p = document.createElement('p')
   p.className = 'chat-message'
 
@@ -203,26 +225,32 @@ function appendChatMessage(msg, prepend = false) {
     p.appendChild(ts)
   }
 
-  if (prepend) {
-    const motd = box.querySelector('.motd')
-    if (motd?.nextSibling) box.insertBefore(p, motd.nextSibling)
-    else box.insertBefore(p, box.firstChild)
-  } else {
-    box.appendChild(p)
-    box.scrollTop = box.scrollHeight
-  }
+  return p
+}
+
+// Append a single live message. Smart-scrolls only when already near the bottom
+// so users reading chat history aren't disturbed by new arrivals.
+function appendChatMessage(msg) {
+  const box = $('#chat-box')
+  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80
+  box.appendChild(buildChatMessageNode(msg))
+  if (atBottom) box.scrollTop = box.scrollHeight
 }
 
 // ---------------------------------------------------------------------------
-// New WS message handlers
+// WS message handlers
 // ---------------------------------------------------------------------------
 function handleChatHistory(packet) {
   const msgs = packet.messages || []
-  // Replay oldest→newest, inserting after the motd element
-  for (const msg of msgs) appendChatMessage(msg, true)
-  // Scroll to bottom after bulk insert
-  const box = $('#chat-box')
-  if (box) box.scrollTop = box.scrollHeight
+  if (!msgs.length) return
+  const box  = $('#chat-box')
+  // DocumentFragment batches all DOM inserts into a single reflow
+  const frag = document.createDocumentFragment()
+  for (const msg of msgs) frag.appendChild(buildChatMessageNode(msg))
+  const motd = box.querySelector('.motd')
+  if (motd?.nextSibling) box.insertBefore(frag, motd.nextSibling)
+  else box.insertBefore(frag, box.firstChild)
+  box.scrollTop = box.scrollHeight
 }
 
 function handleOnlineCount(packet) {
@@ -376,6 +404,34 @@ async function handleDmIce(packet) {
 // ---------------------------------------------------------------------------
 // Video controls
 // ---------------------------------------------------------------------------
+function updateVolumeUI() {
+  const slider = $('#volume-slider')
+  const icon   = $('#volume-icon')
+  const video  = $('video')
+  if (!video || !slider || !icon) return
+  slider.value     = video.muted ? 0 : video.volume
+  icon.textContent = (video.muted || video.volume === 0) ? '🔇' : video.volume < 0.5 ? '🔉' : '🔊'
+  icon.title       = video.muted ? 'Unmute (M)' : 'Mute (M)'
+}
+
+function initVolumeControl() {
+  const slider = $('#volume-slider')
+  const icon   = $('#volume-icon')
+  const video  = $('video')
+  if (!slider || !video) return
+  slider.value = video.volume
+  slider.addEventListener('input', () => {
+    video.volume = parseFloat(slider.value)
+    video.muted  = video.volume === 0
+    updateVolumeUI()
+  })
+  icon?.addEventListener('click', () => {
+    video.muted = !video.muted
+    updateVolumeUI()
+  })
+  video.addEventListener('volumechange', updateVolumeUI)
+}
+
 function initVideo() {
   const container = $('.video-container')
   const video = $('video')
@@ -386,11 +442,15 @@ function initVideo() {
     const controls = $('.play-pause-container')
     if (video.paused || video.ended) {
       video.play().catch(() => {})
+      if (state.user?.role === 'admin')
+        wsSend({ type: 'admin-play-pause', playing: true,  'video-seek-time': video.currentTime })
       controls?.classList.add('animated', 'zoomIn')
       $('.play').style.display = 'initial'
       $('.pause').style.display = 'none'
     } else {
       video.pause()
+      if (state.user?.role === 'admin')
+        wsSend({ type: 'admin-play-pause', playing: false, 'video-seek-time': video.currentTime })
       controls?.classList.add('animated', 'zoomIn')
       $('.pause').style.display = 'initial'
       $('.play').style.display = 'none'
@@ -533,17 +593,45 @@ $('#dm-input')?.addEventListener('keyup', (e) => { if (e.key === 'Enter') sendDm
 document.addEventListener('keydown', (e) => {
   // Don't fire while typing in an input/textarea
   if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return
+  const video = $('video')
 
-  if (e.key === ' ') {
-    // Spacebar: play / pause
-    e.preventDefault()
-    const video = $('video')
-    if (!video) return
-    if (video.paused || video.ended) video.play().catch(() => {})
-    else video.pause()
-  } else if (e.key === 'Escape') {
-    // Escape: close login modal
-    hide($('#login-modal'))
+  switch (e.key) {
+    case ' ': {
+      if (!video) break
+      e.preventDefault()
+      const willPlay = video.paused || video.ended
+      if (willPlay) video.play().catch(() => {})
+      else video.pause()
+      if (state.user?.role === 'admin')
+        wsSend({ type: 'admin-play-pause', playing: willPlay, 'video-seek-time': video.currentTime })
+      break
+    }
+    case 'f': case 'F':
+      if (!video) break
+      e.preventDefault()
+      if (video.requestFullscreen) video.requestFullscreen()
+      else if (video.webkitRequestFullScreen) video.webkitRequestFullScreen()
+      break
+    case 'm': case 'M':
+      if (!video) break
+      e.preventDefault()
+      video.muted = !video.muted
+      updateVolumeUI()
+      break
+    case 'ArrowLeft':
+      if (!video || state.user?.role !== 'admin') break
+      e.preventDefault()
+      video.currentTime = Math.max(0, video.currentTime - 5)
+      break
+    case 'ArrowRight':
+      if (!video || state.user?.role !== 'admin') break
+      e.preventDefault()
+      video.currentTime = Math.min(video.duration || 0, video.currentTime + 5)
+      break
+    case 'Escape':
+      hide($('#login-modal'))
+      closeDmPanel()
+      break
   }
 })
 
@@ -564,15 +652,18 @@ function updateNavBar() {
     if (state.user.role === 'admin') {
       show(btnAdmin)
       $('#video-progress')?.classList.add('admin-seekable')
+      show($('#kbd-hints'))
     } else {
       hide(btnAdmin)
       $('#video-progress')?.classList.remove('admin-seekable')
+      hide($('#kbd-hints'))
     }
   } else {
     show(btnLogin)
     hide(navUser)
     hide(btnLogout)
     hide(btnAdmin)
+    hide($('#kbd-hints'))
     $('#video-progress')?.classList.remove('admin-seekable')
   }
 }
@@ -761,6 +852,7 @@ async function main() {
 
   updateNavBar()
   initVideo()
+  initVolumeControl()
   initChat()
   connectWebSocket()
 }

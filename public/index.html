@@ -63,11 +63,23 @@
           </div>
         </div>
         <button class="video-controls fullscreen">fullscreen</button>
+        <!-- Volume control: appears on hover, keyboard shortcut M -->
+        <div class="video-controls volume-control" title="Volume (M to mute)">
+          <button id="volume-icon" class="volume-icon" aria-label="Mute (M)">🔊</button>
+          <input type="range" id="volume-slider" class="volume-slider"
+                 min="0" max="1" step="0.05" value="1" aria-label="Volume" />
+        </div>
         <video src="/stream" preload="metadata"></video>
         <div class="video-progress" id="video-progress" role="progressbar" aria-label="Video progress">
           <div class="video-progress-fill" id="video-progress-fill"></div>
           <span class="video-progress-time" id="video-progress-time">0:00</span>
         </div>
+        <p class="kbd-hints" id="kbd-hints">
+          <kbd>Space</kbd> play/pause &nbsp;
+          <kbd>F</kbd> fullscreen &nbsp;
+          <kbd>M</kbd> mute &nbsp;
+          <kbd>←</kbd><kbd>→</kbd> ±5 s seek
+        </p>
       </div>
 
       <div class="chat column column-large-5-12">

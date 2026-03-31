@@ -193,19 +193,29 @@ async function ensureAdmin() {
 // ---------------------------------------------------------------------------
 setInterval(() => stmts.deleteExpiredSessions.run(Math.floor(Date.now() / 1000)), SESSION_CLEANUP_INTERVAL_MS).unref()
 
-function parseCookies(cookieHeader) {
-  const out = {}
-  for (const part of (cookieHeader || '').split(';')) {
-    const idx = part.indexOf('=')
-    if (idx < 1) continue
-    const k = part.slice(0, idx).trim()
-    try { out[k] = decodeURIComponent(part.slice(idx + 1).trim()) } catch { out[k] = part.slice(idx + 1).trim() }
+// Fast targeted scan for the session cookie — no object allocation, no full split.
+// Scans cookie header bytes until it finds "mn.sid=", then returns the value.
+function parseSidCookie(header) {
+  if (!header) return null
+  const pfx = SESSION_COOKIE + '='
+  let i = 0
+  while (i < header.length) {
+    while (header.charCodeAt(i) === 32) i++   // skip spaces after ';'
+    if (header.startsWith(pfx, i)) {
+      const start = i + pfx.length
+      const end   = header.indexOf(';', start)
+      const raw   = end < 0 ? header.slice(start) : header.slice(start, end)
+      try { return decodeURIComponent(raw.trim()) } catch { return raw.trim() }
+    }
+    const next = header.indexOf(';', i)
+    if (next < 0) break
+    i = next + 1
   }
-  return out
+  return null
 }
 
 async function loadSession(request) {
-  const sid = parseCookies(request.headers.cookie)[SESSION_COOKIE]
+  const sid = parseSidCookie(request.headers.cookie)
   if (sid) {
     const row = stmts.getSession.get(sid, Math.floor(Date.now() / 1000))
     if (row) {
@@ -298,7 +308,7 @@ function requireAdmin(request, reply) {
 // ---------------------------------------------------------------------------
 // Channel state + WebSocket broadcast
 // ---------------------------------------------------------------------------
-const channel = { launchTime: new Date().toISOString(), currentTime: 0 }
+const channel = { launchTime: new Date().toISOString(), currentTime: 0, playing: false }
 
 let heartbeatFrame = ''
 function buildHeartbeatFrame() {
@@ -310,7 +320,7 @@ function rebuildWelcomePrefix() {
   const motd = JSON.stringify(getSettings()['message-of-the-day'] || '')
   welcomePrefix = `{"type":"welcome","message":{"server-launch-time":"${channel.launchTime}","message-of-the-day":${motd},"video-seek-time":`
 }
-function buildWelcomeFrame() { return `${welcomePrefix}${channel.currentTime}}}` }
+function buildWelcomeFrame() { return `${welcomePrefix}${channel.currentTime},"playing":${channel.playing}}}` }
 
 // wss is assigned after Fastify registers @fastify/websocket
 let wss = null
@@ -327,16 +337,20 @@ function broadcastRaw(data) {
 // ---------------------------------------------------------------------------
 // Chat history ring buffer — data-oriented flat array of message objects.
 // O(1) push, sequential read, no linked-list / GC pressure.
+// _chatHistoryFrame is kept pre-serialized: new connections pay zero JSON cost.
 // ---------------------------------------------------------------------------
 const CHAT_RING_CAP = 50
 const _chatRing = /** @type {object[]} */ (new Array(CHAT_RING_CAP).fill(null))
 let   _chatHead = 0   // next write slot (wraps at CHAT_RING_CAP)
 let   _chatLen  = 0   // valid entries (saturates at CHAT_RING_CAP)
+let   _chatHistoryFrame = '{"type":"chat-history","messages":[]}'
 
 function chatRingPush(msgObject) {
   _chatRing[_chatHead] = msgObject
   _chatHead = (_chatHead + 1) % CHAT_RING_CAP
   if (_chatLen < CHAT_RING_CAP) _chatLen++
+  // Rebuild once per push — amortised cost; new connections pay zero serialization
+  _chatHistoryFrame = JSON.stringify({ type: 'chat-history', messages: chatRingSnapshot() })
 }
 
 /** Returns message objects oldest→newest. Allocates only the output array. */
@@ -366,6 +380,14 @@ app.addHook('onSend', async (request, reply) => {
   reply.header('X-Frame-Options',          'SAMEORIGIN')
   reply.header('Referrer-Policy',          'same-origin')
   reply.header('Permissions-Policy',       'camera=(), microphone=(), geolocation=()')
+  reply.header('Content-Security-Policy',
+    "default-src 'self'; " +
+    "style-src 'self' https://fonts.googleapis.com; " +
+    "font-src https://fonts.gstatic.com; " +
+    "media-src 'self'; " +
+    "connect-src 'self' ws: wss:; " +
+    "img-src 'self' data:; " +
+    "frame-ancestors 'none'")
   if (IS_PRODUCTION) reply.header('Strict-Transport-Security', 'max-age=63072000; includeSubDomains')
 })
 
@@ -428,15 +450,21 @@ app.get('/stream', async (request, reply) => {
 const wsClientsByIp  = new Map()
 const connectedUsers = new Map()  // username → socket (logged-in users only)
 
-/** Broadcast the current online count + user list to all clients. */
+// Pending-flag deduplication: rapid connect/disconnect storms collapse to one
+// broadcast per event-loop tick. Zero extra allocations on the hot path.
+let _onlineCountPending = false
 function broadcastOnlineCount() {
-  if (!wss) return
-  const frame = JSON.stringify({
-    type:  'online-count',
-    total: wss.clients.size,
-    users: [...connectedUsers.keys()],
+  if (_onlineCountPending) return
+  _onlineCountPending = true
+  setImmediate(() => {
+    _onlineCountPending = false
+    if (!wss) return
+    broadcastRaw(JSON.stringify({
+      type:  'online-count',
+      total: wss.clients.size,
+      users: [...connectedUsers.keys()],
+    }))
   })
-  broadcastRaw(frame)
 }
 
 app.get('/ws', { websocket: true }, (socket, request) => {
@@ -450,35 +478,45 @@ app.get('/ws', { websocket: true }, (socket, request) => {
     socket.close(1008, 'Too many connections from this IP')
     return
   }
+
+  // Validate Origin header to block cross-site WebSocket hijacking
+  const wsOrigin = request.headers.origin
+  if (wsOrigin) {
+    const host = request.headers.host || ''
+    if (wsOrigin !== 'http://' + host && wsOrigin !== 'https://' + host) {
+      socket.close(1008, 'Invalid origin')
+      return
+    }
+  }
+
   wsClientsByIp.set(ip, (wsClientsByIp.get(ip) ?? 0) + 1)
 
   const sessionUser = request.session?.user || null
   socket.user = sessionUser
   if (sessionUser) connectedUsers.set(sessionUser.username, socket)
 
-  // Send welcome frame + chat history in a single burst (fewer round-trips)
+  // Send welcome frame + pre-serialized chat history in a single burst
   socket.send(buildWelcomeFrame())
-  const history = chatRingSnapshot()
-  if (history.length > 0) socket.send(JSON.stringify({ type: 'chat-history', messages: history }))
+  if (_chatLen > 0) socket.send(_chatHistoryFrame)
 
   // Let everyone (including this new socket) know the updated head count
-  setImmediate(broadcastOnlineCount)
+  broadcastOnlineCount()
 
-  // Per-socket message flood guard: max 10 messages per second
-  let msgCount = 0
-  const msgReset = setInterval(() => { msgCount = 0 }, 1000)
+  // Per-socket flood guard: ≤10 messages/s, timestamp-based — no setInterval needed
+  let _wsMsg = 0, _wsMsgStart = Date.now()
 
   socket.on('close', () => {
-    clearInterval(msgReset)
     const n = wsClientsByIp.get(ip) ?? 1
     if (n <= 1) wsClientsByIp.delete(ip)
     else wsClientsByIp.set(ip, n - 1)
     if (sessionUser) connectedUsers.delete(sessionUser.username)
-    setImmediate(broadcastOnlineCount)
+    broadcastOnlineCount()
   })
 
   socket.on('message', (raw) => {
-    if (++msgCount > 10) return
+    const _now = Date.now()
+    if (_now - _wsMsgStart >= 1000) { _wsMsg = 0; _wsMsgStart = _now }
+    if (++_wsMsg > 10) return
     let packet
     try { packet = JSON.parse(raw) } catch { return }
 
@@ -487,6 +525,16 @@ app.get('/ws', { websocket: true }, (socket, request) => {
         if (socket.user?.role !== 'admin') return
         channel.currentTime = Number(packet.message?.['video-seek-time']) || 0
         break
+
+      case 'admin-play-pause': {
+        if (socket.user?.role !== 'admin') return
+        channel.playing = !!packet.playing
+        const seekTime = typeof packet['video-seek-time'] === 'number'
+          ? packet['video-seek-time'] : channel.currentTime
+        channel.currentTime = seekTime
+        broadcast({ type: 'play-pause', playing: channel.playing, 'video-seek-time': seekTime })
+        break
+      }
 
       case 'chat-message': {
         const msg       = packet.message || {}

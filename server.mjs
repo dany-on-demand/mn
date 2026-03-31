@@ -461,6 +461,7 @@ app.post('/api/auth/login', async (request, reply) => {
 })
 
 app.post('/api/auth/logout', async (request, reply) => {
+  if (rateLimited(request.ip, RL_AUTH)) return reply.code(429).send({ error: 'Too many requests, please try again later' })
   if (!requireAuth(request, reply)) return
   if (!csrfCheck(request, reply)) return
   destroySession(request, reply)

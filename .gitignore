@@ -2,6 +2,7 @@ node_modules/
 sessions/
 media/*
 !media/.gitkeep
+!media/test.mp4
 data/*
 !data/.gitkeep
 .env

@@ -39,6 +39,7 @@
       <img src="/banner.png" alt="Movie Night" class="banner" />
       <div class="nav-actions">
         <span id="ws-status" class="ws-dot ws-dot--connecting" title="Connecting…"></span>
+        <span id="online-count" class="online-count" title="Viewers online">0 online</span>
         <button id="btn-login" class="button-alternative hidden">login <span class="arrow">❯</span></button>
         <span id="nav-user" class="nav-user hidden"></span>
         <button id="btn-admin" class="button-alternative hidden">admin <span class="arrow">❯</span></button>
@@ -73,6 +74,7 @@
         <div class="chat-box row" id="chat-box">
           <span class="motd" id="motd"></span>
         </div>
+        <p id="typing-indicator" class="typing-indicator"></p>
         <div class="chat-input row">
           <input id="chat-name-input" type="text" name="name" placeholder="Pick a name…" />
           <input id="chat-msg-input" type="text" name="chat" placeholder="Type a message…" class="hidden" />
@@ -171,5 +173,18 @@
 
   <script type="module" src="/app.js"></script>
   <script src="/funstuff.js" defer></script>
+
+  <!-- P2P DM panel (WebRTC – server only relays ICE/SDP, payloads are peer-to-peer) -->
+  <div id="dm-panel" class="dm-panel hidden" role="dialog" aria-label="Direct message">
+    <div class="dm-panel-header">
+      <span>💬 <strong id="dm-peer-name"></strong></span>
+      <button id="dm-close-btn" class="dm-close-btn" aria-label="Close DM">×</button>
+    </div>
+    <div id="dm-messages" class="dm-messages"></div>
+    <div class="dm-input-row">
+      <input id="dm-input" type="text" placeholder="Message…" autocomplete="off" />
+      <button id="dm-send-btn" class="chat-button">send</button>
+    </div>
+  </div>
 </body>
 </html>

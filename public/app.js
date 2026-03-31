@@ -6,6 +6,10 @@
 const VIDEO_SYNC_THRESHOLD_S  = 2    // seconds of drift before force-syncing
 const WS_RECONNECT_BASE_MS    = 1000 // initial reconnect delay
 const WS_RECONNECT_MAX_MS     = 30000 // cap on reconnect delay
+// STUN servers for WebRTC — override via window.MN_STUN_SERVERS if needed
+const STUN_SERVERS = (typeof window !== 'undefined' && window.MN_STUN_SERVERS)
+  ? window.MN_STUN_SERVERS
+  : [{ urls: 'stun:stun.l.google.com:19302' }]
 
 const state = {
   user: null,         // logged-in user object from /api/auth/me
@@ -15,7 +19,8 @@ const state = {
   ws: null,
   adminView: false,
   csrfToken: null,    // synchronizer CSRF token
-  wsReconnectDelay: WS_RECONNECT_BASE_MS
+  wsReconnectDelay: WS_RECONNECT_BASE_MS,
+  onlineUsers: [],    // logged-in usernames currently connected
 }
 
 // ---------------------------------------------------------------------------
@@ -96,7 +101,13 @@ function connectWebSocket() {
       case 'welcome':         handleWelcome(packet.message); break
       case 'heartbeat':       handleHeartbeat(packet.message); break
       case 'authoritative':   handleAuthoritative(packet.message); break
-      case 'incoming-chat-message': handleChatMessage(packet.message); break
+      case 'incoming-chat-message': appendChatMessage(packet.message); break
+      case 'chat-history':    handleChatHistory(packet); break
+      case 'online-count':    handleOnlineCount(packet); break
+      case 'typing':          handleTyping(packet.username); break
+      case 'dm-offer':        handleDmOffer(packet).catch(console.error); break
+      case 'dm-answer':       handleDmAnswer(packet).catch(console.error); break
+      case 'dm-ice':          handleDmIce(packet).catch(console.error); break
     }
   })
 
@@ -156,6 +167,13 @@ function handleAuthoritative(msg) {
 }
 
 function handleChatMessage(msg) {
+  appendChatMessage(msg)
+}
+
+// ---------------------------------------------------------------------------
+// Shared chat message renderer — used for both live messages and history replay
+// ---------------------------------------------------------------------------
+function appendChatMessage(msg, prepend = false) {
   const box = $('#chat-box')
   const p = document.createElement('p')
   p.className = 'chat-message'
@@ -164,13 +182,195 @@ function handleChatMessage(msg) {
   owner.className = 'chat-message-owner'
   owner.textContent = msg['chat-message-owner'] || 'Anonymous'
 
-  p.appendChild(owner)
-  // Use textContent on a separate node to avoid XSS
-  const text = document.createTextNode('\u00a0' + msg['chat-message'])
-  p.appendChild(text)
+  // Logged-in users in the online list get a clickable DM link
+  if (state.user && state.onlineUsers.includes(msg['chat-message-owner']) &&
+      msg['chat-message-owner'] !== state.user.username) {
+    owner.classList.add('chat-message-owner--dm')
+    owner.title = `Click to DM ${msg['chat-message-owner']}`
+    owner.addEventListener('click', () => startDm(msg['chat-message-owner']))
+  }
 
-  box.appendChild(p)
+  p.appendChild(owner)
+  p.appendChild(document.createTextNode('\u00a0' + msg['chat-message']))
+
+  // Timestamp (visible on hover)
+  if (msg['server-time']) {
+    const d  = new Date(msg['server-time'])
+    const ts = document.createElement('time')
+    ts.className = 'chat-message-time'
+    ts.dateTime  = msg['server-time']
+    ts.textContent = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+    p.appendChild(ts)
+  }
+
+  if (prepend) {
+    const motd = box.querySelector('.motd')
+    if (motd?.nextSibling) box.insertBefore(p, motd.nextSibling)
+    else box.insertBefore(p, box.firstChild)
+  } else {
+    box.appendChild(p)
+    box.scrollTop = box.scrollHeight
+  }
+}
+
+// ---------------------------------------------------------------------------
+// New WS message handlers
+// ---------------------------------------------------------------------------
+function handleChatHistory(packet) {
+  const msgs = packet.messages || []
+  // Replay oldest→newest, inserting after the motd element
+  for (const msg of msgs) appendChatMessage(msg, true)
+  // Scroll to bottom after bulk insert
+  const box = $('#chat-box')
+  if (box) box.scrollTop = box.scrollHeight
+}
+
+function handleOnlineCount(packet) {
+  state.onlineUsers = packet.users || []
+  const el = $('#online-count')
+  if (!el) return
+  el.textContent = `${packet.total} online`
+  el.title = state.onlineUsers.length
+    ? `Logged in: ${state.onlineUsers.join(', ')}`
+    : `${packet.total} viewer${packet.total !== 1 ? 's' : ''}`
+}
+
+// Typing indicator — debounced display per username
+const _typingTimers = new Map()  // username → clearTimeout handle
+function handleTyping(username) {
+  if (!username || username === state.user?.username) return
+  const prev = _typingTimers.get(username)
+  if (prev) clearTimeout(prev)
+  _typingTimers.set(username, setTimeout(() => {
+    _typingTimers.delete(username)
+    renderTypingIndicator()
+  }, 3000))
+  renderTypingIndicator()
+}
+function renderTypingIndicator() {
+  const el = $('#typing-indicator')
+  if (!el) return
+  const names = [..._typingTimers.keys()]
+  el.textContent = names.length === 0 ? ''
+    : names.length === 1 ? `${names[0]} is typing…`
+    : `${names.slice(0, 2).join(', ')} are typing…`
+}
+
+// ---------------------------------------------------------------------------
+// P2P Direct Messages via WebRTC data channels.
+// The server only relays SDP offer/answer and ICE candidates — the actual
+// message payloads travel peer-to-peer and never touch the server.
+// ---------------------------------------------------------------------------
+const _dmPeers    = new Map()   // username → {pc, dc, msgs:[]}
+let   _activeDm   = null        // currently open DM peer username
+
+function openDmPanel(username) {
+  _activeDm = username
+  const panel = $('#dm-panel')
+  const title = $('#dm-peer-name')
+  if (title) title.textContent = username
+  renderDmMessages(username)
+  show(panel)
+  $('#dm-input')?.focus()
+}
+
+function closeDmPanel() {
+  _activeDm = null
+  hide($('#dm-panel'))
+}
+
+function renderDmMessages(username) {
+  const peer = _dmPeers.get(username)
+  const box  = $('#dm-messages')
+  if (!box || !peer) return
+  box.innerHTML = ''
+  for (const m of peer.msgs) {
+    const p = document.createElement('p')
+    p.className = 'dm-message' + (m.from === state.user?.username ? ' dm-message--mine' : '')
+    const owner = document.createElement('span')
+    owner.className = 'chat-message-owner'
+    owner.textContent = m.from
+    p.appendChild(owner)
+    p.appendChild(document.createTextNode('\u00a0' + m.text))
+    box.appendChild(p)
+  }
   box.scrollTop = box.scrollHeight
+}
+
+function receiveDmMessage(fromUser, text) {
+  const peer = _dmPeers.get(fromUser)
+  if (!peer) return
+  peer.msgs.push({ from: fromUser, text })
+  if (_activeDm === fromUser) renderDmMessages(fromUser)
+  else displayToast(`💬 ${fromUser}: ${text.length > 40 ? text.slice(0, 40) + '…' : text}`)
+}
+
+function sendDmMessage() {
+  if (!_activeDm) return
+  const input = $('#dm-input')
+  const text  = input?.value.trim()
+  if (!text) return
+  const peer = _dmPeers.get(_activeDm)
+  if (!peer?.dc || peer.dc.readyState !== 'open') { displayToast('DM not connected yet'); return }
+  peer.dc.send(text)
+  peer.msgs.push({ from: state.user.username, text })
+  if (input) input.value = ''
+  renderDmMessages(_activeDm)
+}
+
+async function startDm(toUser) {
+  if (!state.user) { displayToast('Log in to use DMs'); return }
+  if (toUser === state.user.username) return
+  if (_dmPeers.has(toUser)) { openDmPanel(toUser); return }
+
+  const pc = new RTCPeerConnection({ iceServers: STUN_SERVERS })
+  const dc = pc.createDataChannel('dm', { ordered: true })
+  dc.onopen    = () => { openDmPanel(toUser); displayToast(`Connected to ${toUser}`) }
+  dc.onmessage = (e) => receiveDmMessage(toUser, e.data)
+  pc.onicecandidate = (e) => {
+    if (e.candidate) wsSend({ type: 'dm-ice', to: toUser, candidate: e.candidate.toJSON() })
+  }
+
+  const offer = await pc.createOffer()
+  await pc.setLocalDescription(offer)
+  wsSend({ type: 'dm-offer', to: toUser, sdp: offer.sdp })
+  _dmPeers.set(toUser, { pc, dc, msgs: [] })
+}
+
+async function handleDmOffer(packet) {
+  const from = packet.from
+  if (_dmPeers.has(from)) return
+
+  const pc = new RTCPeerConnection({ iceServers: STUN_SERVERS })
+  pc.ondatachannel = (e) => {
+    const dc = e.channel
+    dc.onopen    = () => { openDmPanel(from); displayToast(`Connected to ${from}`) }
+    dc.onmessage = (ev) => receiveDmMessage(from, ev.data)
+    const peer = _dmPeers.get(from)
+    if (peer) peer.dc = dc
+  }
+  pc.onicecandidate = (e) => {
+    if (e.candidate) wsSend({ type: 'dm-ice', to: from, candidate: e.candidate.toJSON() })
+  }
+
+  _dmPeers.set(from, { pc, dc: null, msgs: [] })
+  await pc.setRemoteDescription({ type: 'offer', sdp: packet.sdp })
+  const answer = await pc.createAnswer()
+  await pc.setLocalDescription(answer)
+  wsSend({ type: 'dm-answer', to: from, sdp: answer.sdp })
+  displayToast(`💬 DM request from ${from}`)
+}
+
+async function handleDmAnswer(packet) {
+  const peer = _dmPeers.get(packet.from)
+  if (!peer) return
+  await peer.pc.setRemoteDescription({ type: 'answer', sdp: packet.sdp })
+}
+
+async function handleDmIce(packet) {
+  const peer = _dmPeers.get(packet.from)
+  if (!peer || !packet.candidate) return
+  try { await peer.pc.addIceCandidate(packet.candidate) } catch { /* stale candidate */ }
 }
 
 // ---------------------------------------------------------------------------
@@ -286,6 +486,16 @@ function initChat() {
   nameInput?.addEventListener('keyup', handleChatInput)
   msgInput?.addEventListener('keyup', handleChatInput)
 
+  // Emit typing indicator while the user is composing (throttled to once per 2 s)
+  let _lastTypingSent = 0
+  msgInput?.addEventListener('input', () => {
+    if (!state.user) return
+    const now = performance.now()
+    if (now - _lastTypingSent < 2000) return
+    _lastTypingSent = now
+    wsSend({ type: 'typing' })
+  })
+
   updateChatState()
 }
 
@@ -311,6 +521,11 @@ $('#close-toast')?.addEventListener('click', () => {
   if (toastTimer) clearTimeout(toastTimer)
   hide($('#info-toast'))
 })
+
+// DM panel controls
+$('#dm-close-btn')?.addEventListener('click', closeDmPanel)
+$('#dm-send-btn')?.addEventListener('click', sendDmMessage)
+$('#dm-input')?.addEventListener('keyup', (e) => { if (e.key === 'Enter') sendDmMessage() })
 
 // ---------------------------------------------------------------------------
 // Keyboard shortcuts

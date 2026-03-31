@@ -23,13 +23,22 @@ const MAX_CHAT_USERNAME_LENGTH     = 64
 const IS_PRODUCTION                = process.env.NODE_ENV === 'production'
 const STATIC_DIR                   = path.join(__dirname, 'public')
 const MEDIA_DIR                    = path.join(__dirname, 'media')
+const MAX_WS_CONNECTIONS           = parseInt(process.env.MAX_WS_CONNECTIONS || '200', 10)  // configurable via env
+const MAX_WS_PER_IP                = 5
 
-// Rate limit policies: [maxRequests, windowMs]
-const RL_AUTH   = [20,  15 * 60 * 1000]
-const RL_READ   = [120, 60_000]
-const RL_WRITE  = [60,  60_000]
-const RL_STREAM = [30,  60_000]
-const RL_STATIC = [300, 60_000]
+// ---------------------------------------------------------------------------
+// Token-bucket rate limit policy IDs and configs
+// Using integer enum avoids string key assembly on every call.
+// Config: [capacity, refillWindowMs]
+// ---------------------------------------------------------------------------
+const RL = Object.freeze({ AUTH: 0, READ: 1, WRITE: 2, STREAM: 3, STATIC: 4 })
+const RL_CONFIGS = [
+  [20,  15 * 60 * 1000],  // AUTH
+  [120, 60_000],           // READ
+  [60,  60_000],           // WRITE
+  [30,  60_000],           // STREAM
+  [300, 60_000],           // STATIC
+]
 
 // ---------------------------------------------------------------------------
 // Data directory & SQLite database
@@ -231,20 +240,32 @@ function destroySession(request, reply) {
 }
 
 // ---------------------------------------------------------------------------
-// Rate limiting — in-memory sliding window
+// Token-bucket rate limiting — one dedicated Map per policy.
+// No string key assembly per call → fewer allocations, better cache locality.
+// Each entry: [tokensLeft, lastCheckMs]
 // ---------------------------------------------------------------------------
-const rlStore = new Map()
+const _rlMaps = /** @type {Map<string,number[]>[]} */ (Array.from({ length: 5 }, () => new Map()))
 setInterval(() => {
   const now = Date.now()
-  for (const [k, v] of rlStore) if (now > v.resetAt) rlStore.delete(k)
+  for (let p = 0; p < 5; p++) {
+    const [, wMs] = RL_CONFIGS[p]
+    for (const [ip, e] of _rlMaps[p]) if (now - e[1] > wMs * 2) _rlMaps[p].delete(ip)
+  }
 }, 60_000).unref()
 
-function rateLimited(ip, [maxReqs, windowMs]) {
-  const key = `${ip}:${maxReqs}:${windowMs}`
+/** Returns true when the IP has exhausted its budget for the given policy. */
+function rateLimited(ip, policy) {
+  const [cap, wMs] = RL_CONFIGS[policy]
+  const map = _rlMaps[policy]
   const now = Date.now()
-  let e = rlStore.get(key)
-  if (!e || now > e.resetAt) { rlStore.set(key, { count: 1, resetAt: now + windowMs }); return false }
-  return ++e.count > maxReqs
+  let e = map.get(ip)
+  if (!e) { map.set(ip, [cap - 1, now]); return false }
+  // Refill proportionally to elapsed time (continuous token bucket)
+  const refilled = Math.min(cap, e[0] + (now - e[1]) / wMs * cap)
+  e[1] = now
+  if (refilled >= 1) { e[0] = refilled - 1; return false }
+  e[0] = 0
+  return true
 }
 
 // ---------------------------------------------------------------------------
@@ -304,6 +325,30 @@ function broadcastRaw(data) {
 }
 
 // ---------------------------------------------------------------------------
+// Chat history ring buffer — data-oriented flat array of message objects.
+// O(1) push, sequential read, no linked-list / GC pressure.
+// ---------------------------------------------------------------------------
+const CHAT_RING_CAP = 50
+const _chatRing = /** @type {object[]} */ (new Array(CHAT_RING_CAP).fill(null))
+let   _chatHead = 0   // next write slot (wraps at CHAT_RING_CAP)
+let   _chatLen  = 0   // valid entries (saturates at CHAT_RING_CAP)
+
+function chatRingPush(msgObject) {
+  _chatRing[_chatHead] = msgObject
+  _chatHead = (_chatHead + 1) % CHAT_RING_CAP
+  if (_chatLen < CHAT_RING_CAP) _chatLen++
+}
+
+/** Returns message objects oldest→newest. Allocates only the output array. */
+function chatRingSnapshot() {
+  if (_chatLen === 0) return []
+  const out   = new Array(_chatLen)
+  const start = _chatLen < CHAT_RING_CAP ? 0 : _chatHead
+  for (let i = 0; i < _chatLen; i++) out[i] = _chatRing[(start + i) % CHAT_RING_CAP]
+  return out
+}
+
+// ---------------------------------------------------------------------------
 // Fastify application
 // ---------------------------------------------------------------------------
 const app = Fastify({
@@ -356,7 +401,7 @@ app.addHook('onRequest', async (request, reply) => {
     request.url !== '/stream' &&
     !request.url.startsWith('/ws')
   ) {
-    if (rateLimited(request.ip, RL_STATIC)) {
+    if (rateLimited(request.ip, RL.STATIC)) {
       reply.code(429).send('Too many requests')
     }
   }
@@ -366,7 +411,7 @@ app.addHook('onRequest', async (request, reply) => {
 // Video stream — `send` handles byte-range natively
 // ---------------------------------------------------------------------------
 app.get('/stream', async (request, reply) => {
-  if (rateLimited(request.ip, RL_STREAM)) return reply.code(429).send('Too many requests')
+  if (rateLimited(request.ip, RL.STREAM)) return reply.code(429).send('Too many requests')
   if (!mediaFileExists) return reply.code(404).send('Media file not found. Add it to the /media directory.')
   // Use `send` via the raw Node.js response for proper Range support
   return new Promise((resolve, reject) => {
@@ -380,29 +425,57 @@ app.get('/stream', async (request, reply) => {
 // ---------------------------------------------------------------------------
 // WebSocket endpoint
 // ---------------------------------------------------------------------------
-const wsClientsByIp = new Map()
+const wsClientsByIp  = new Map()
+const connectedUsers = new Map()  // username → socket (logged-in users only)
+
+/** Broadcast the current online count + user list to all clients. */
+function broadcastOnlineCount() {
+  if (!wss) return
+  const frame = JSON.stringify({
+    type:  'online-count',
+    total: wss.clients.size,
+    users: [...connectedUsers.keys()],
+  })
+  broadcastRaw(frame)
+}
 
 app.get('/ws', { websocket: true }, (socket, request) => {
+  // Global connection cap — hard limit to resist exhaustion attacks
+  if (wss.clients.size > MAX_WS_CONNECTIONS) {
+    socket.close(1008, 'Server at capacity')
+    return
+  }
   const ip = request.ip
-  if ((wsClientsByIp.get(ip) ?? 0) >= 5) {
+  if ((wsClientsByIp.get(ip) ?? 0) >= MAX_WS_PER_IP) {
     socket.close(1008, 'Too many connections from this IP')
     return
   }
   wsClientsByIp.set(ip, (wsClientsByIp.get(ip) ?? 0) + 1)
-  socket.on('close', () => {
-    const n = wsClientsByIp.get(ip) ?? 1
-    if (n <= 1) wsClientsByIp.delete(ip)
-    else wsClientsByIp.set(ip, n - 1)
-  })
 
   const sessionUser = request.session?.user || null
   socket.user = sessionUser
+  if (sessionUser) connectedUsers.set(sessionUser.username, socket)
 
+  // Send welcome frame + chat history in a single burst (fewer round-trips)
   socket.send(buildWelcomeFrame())
+  const history = chatRingSnapshot()
+  if (history.length > 0) socket.send(JSON.stringify({ type: 'chat-history', messages: history }))
 
+  // Let everyone (including this new socket) know the updated head count
+  setImmediate(broadcastOnlineCount)
+
+  // Per-socket message flood guard: max 10 messages per second
   let msgCount = 0
   const msgReset = setInterval(() => { msgCount = 0 }, 1000)
-  socket.on('close', () => clearInterval(msgReset))
+
+  socket.on('close', () => {
+    clearInterval(msgReset)
+    const n = wsClientsByIp.get(ip) ?? 1
+    if (n <= 1) wsClientsByIp.delete(ip)
+    else wsClientsByIp.set(ip, n - 1)
+    if (sessionUser) connectedUsers.delete(sessionUser.username)
+    setImmediate(broadcastOnlineCount)
+  })
 
   socket.on('message', (raw) => {
     if (++msgCount > 10) return
@@ -420,10 +493,35 @@ app.get('/ws', { websocket: true }, (socket, request) => {
         const chatText  = String(msg['chat-message']        || '').trim().slice(0, MAX_CHAT_MESSAGE_LENGTH)
         const chatOwner = String(msg['chat-message-owner'] || 'Anonymous').trim().slice(0, MAX_CHAT_USERNAME_LENGTH)
         if (!chatText) return
-        broadcast({
-          type: 'incoming-chat-message',
-          message: { 'server-time': new Date().toISOString(), 'chat-message': chatText, 'chat-message-owner': chatOwner }
-        })
+        const msgObj = { 'server-time': new Date().toISOString(), 'chat-message': chatText, 'chat-message-owner': chatOwner }
+        chatRingPush(msgObj)
+        broadcast({ type: 'incoming-chat-message', message: msgObj })
+        break
+      }
+
+      // WebRTC signaling — relay between authenticated users for P2P private DMs.
+      // The server only sees encrypted SDP/ICE; actual DM payloads go peer-to-peer.
+      case 'dm-offer':
+      case 'dm-answer':
+      case 'dm-ice': {
+        if (!socket.user) return
+        const to = String(packet.to || '').slice(0, MAX_CHAT_USERNAME_LENGTH)
+        const target = connectedUsers.get(to)
+        if (!target || target.readyState !== 1) return
+        target.send(JSON.stringify({
+          type: packet.type,
+          from: socket.user.username,
+          ...(packet.sdp       !== undefined && { sdp:       packet.sdp }),
+          ...(packet.candidate !== undefined && { candidate: packet.candidate }),
+        }))
+        break
+      }
+
+      // Typing indicator — relay to everyone except sender
+      case 'typing': {
+        if (!socket.user) return
+        const frame = JSON.stringify({ type: 'typing', username: socket.user.username })
+        for (const c of wss.clients) if (c !== socket && c.readyState === 1) c.send(frame)
         break
       }
     }
@@ -445,7 +543,7 @@ app.get('/api/auth/me', async (request, reply) => {
 })
 
 app.post('/api/auth/login', async (request, reply) => {
-  if (rateLimited(request.ip, RL_AUTH)) return reply.code(429).send({ error: 'Too many requests, please try again later' })
+  if (rateLimited(request.ip, RL.AUTH)) return reply.code(429).send({ error: 'Too many requests, please try again later' })
   if (!csrfCheck(request, reply)) return
   const { username, password } = request.body || {}
   if (!username || !password)    return reply.code(400).send({ error: 'Username and password are required' })
@@ -461,7 +559,7 @@ app.post('/api/auth/login', async (request, reply) => {
 })
 
 app.post('/api/auth/logout', async (request, reply) => {
-  if (rateLimited(request.ip, RL_AUTH)) return reply.code(429).send({ error: 'Too many requests, please try again later' })
+  if (rateLimited(request.ip, RL.AUTH)) return reply.code(429).send({ error: 'Too many requests, please try again later' })
   if (!requireAuth(request, reply)) return
   if (!csrfCheck(request, reply)) return
   destroySession(request, reply)
@@ -471,7 +569,7 @@ app.post('/api/auth/logout', async (request, reply) => {
 app.post('/api/auth/change-password', async (request, reply) => {
   if (!requireAuth(request, reply))    return
   if (!csrfCheck(request, reply))      return
-  if (rateLimited(request.ip, RL_AUTH)) return reply.code(429).send({ error: 'Too many requests, please try again later' })
+  if (rateLimited(request.ip, RL.AUTH)) return reply.code(429).send({ error: 'Too many requests, please try again later' })
   const { currentPassword, newPassword } = request.body || {}
   if (!currentPassword || !newPassword) return reply.code(400).send({ error: 'currentPassword and newPassword are required' })
   if (newPassword.length < 8)           return reply.code(400).send({ error: 'New password must be at least 8 characters' })
@@ -484,14 +582,14 @@ app.post('/api/auth/change-password', async (request, reply) => {
 
 app.get('/api/settings', async (request, reply) => {
   if (!requireAdmin(request, reply))    return
-  if (rateLimited(request.ip, RL_READ)) return reply.code(429).send({ error: 'Too many requests, please try again later' })
+  if (rateLimited(request.ip, RL.READ)) return reply.code(429).send({ error: 'Too many requests, please try again later' })
   return getSettings()
 })
 
 app.post('/api/settings', async (request, reply) => {
   if (!requireAdmin(request, reply))     return
   if (!csrfCheck(request, reply))        return
-  if (rateLimited(request.ip, RL_WRITE)) return reply.code(429).send({ error: 'Too many requests, please try again later' })
+  if (rateLimited(request.ip, RL.WRITE)) return reply.code(429).send({ error: 'Too many requests, please try again later' })
   const body = request.body || {}
   if (body.media_file) {
     const resolved = path.resolve(MEDIA_DIR, body.media_file)
@@ -509,14 +607,14 @@ app.post('/api/settings', async (request, reply) => {
 
 app.get('/api/users', async (request, reply) => {
   if (!requireAdmin(request, reply))    return
-  if (rateLimited(request.ip, RL_READ)) return reply.code(429).send({ error: 'Too many requests, please try again later' })
+  if (rateLimited(request.ip, RL.READ)) return reply.code(429).send({ error: 'Too many requests, please try again later' })
   return stmts.listUsers.all()
 })
 
 app.post('/api/users', async (request, reply) => {
   if (!requireAdmin(request, reply))     return
   if (!csrfCheck(request, reply))        return
-  if (rateLimited(request.ip, RL_WRITE)) return reply.code(429).send({ error: 'Too many requests, please try again later' })
+  if (rateLimited(request.ip, RL.WRITE)) return reply.code(429).send({ error: 'Too many requests, please try again later' })
   const { username, password, role = 'user' } = request.body || {}
   if (!username || !password)            return reply.code(400).send({ error: 'username and password are required' })
   if (!['user', 'admin'].includes(role)) return reply.code(400).send({ error: 'role must be user or admin' })
@@ -532,7 +630,7 @@ app.post('/api/users', async (request, reply) => {
 app.delete('/api/users/:id', async (request, reply) => {
   if (!requireAdmin(request, reply))     return
   if (!csrfCheck(request, reply))        return
-  if (rateLimited(request.ip, RL_WRITE)) return reply.code(429).send({ error: 'Too many requests, please try again later' })
+  if (rateLimited(request.ip, RL.WRITE)) return reply.code(429).send({ error: 'Too many requests, please try again later' })
   const id = parseInt(request.params.id, 10)
   if (!id)                          return reply.code(400).send({ error: 'Invalid user id' })
   if (id === request.session.user.id) return reply.code(400).send({ error: 'Cannot delete your own account' })
@@ -543,7 +641,7 @@ app.delete('/api/users/:id', async (request, reply) => {
 
 app.get('/api/media', async (request, reply) => {
   if (!requireAdmin(request, reply))    return
-  if (rateLimited(request.ip, RL_READ)) return reply.code(429).send({ error: 'Too many requests, please try again later' })
+  if (rateLimited(request.ip, RL.READ)) return reply.code(429).send({ error: 'Too many requests, please try again later' })
   try {
     return (await fs.promises.readdir(MEDIA_DIR)).filter(f => !f.startsWith('.'))
   } catch {

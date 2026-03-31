@@ -1,0 +1,21 @@
+services:
+  mn:
+    build: .
+    ports:
+      - "${PORT:-3016}:3016"
+    volumes:
+      # Persist media files and database across restarts
+      - ./media:/app/media
+      - mn_data:/app/data
+    environment:
+      NODE_ENV: "production"
+      PORT: "3016"
+      # Set these to pre-configure the admin account on first run.
+      # If omitted, a random password is printed to the container logs.
+      # ADMIN_USERNAME: admin
+      # ADMIN_PASSWORD: change-me
+      # SESSION_SECRET: a-long-random-string
+    restart: unless-stopped
+
+volumes:
+  mn_data:

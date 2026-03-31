@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>movie night</title>
+  <link rel="icon" href="/icon.ico" />
+  <link rel="stylesheet" href="/app.css" />
+  <!-- Restore saved theme before first paint (prevents flash) -->
+  <script>(function(){var t=localStorage.getItem('mn-theme');if(t)document.documentElement.dataset.theme=t;})()</script>
+</head>
+<body>
+  <canvas class="background-funstuff"></canvas>
+
+  <!-- Login modal (Win9x dialog style) -->
+  <div id="login-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="login-title">
+    <div class="modal-box">
+      <div class="modal-titlebar" id="login-title">🎬 movie night — login</div>
+      <div class="modal-body">
+        <form id="login-form" autocomplete="on">
+          <fieldset>
+            <legend>username</legend>
+            <input type="text" id="login-username" name="username" autocomplete="username" required />
+          </fieldset>
+          <fieldset>
+            <legend>password</legend>
+            <input type="password" id="login-password" name="password" autocomplete="current-password" required />
+          </fieldset>
+          <p id="login-error" class="form-error hidden"></p>
+          <div class="form-actions">
+            <button type="submit" class="button-alternative">
+              login <span class="arrow">❯</span>
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <main class="container container-medium-75vw">
+    <!-- Nav bar -->
+    <nav id="navbar" class="row navbar">
+      <img src="/banner.png" alt="Movie Night" class="banner" />
+      <div class="nav-actions">
+        <span id="ws-status" class="ws-dot ws-dot--connecting" title="Connecting…"></span>
+        <span id="online-count" class="online-count" title="Viewers online">0 online</span>
+        <button id="btn-login" class="button-alternative hidden">login <span class="arrow">❯</span></button>
+        <span id="nav-user" class="nav-user hidden"></span>
+        <button id="btn-admin" class="button-alternative hidden">admin <span class="arrow">❯</span></button>
+        <button id="btn-logout" class="button-alternative hidden">logout <span class="arrow">❯</span></button>
+        <button id="btn-theme" title="Toggle light/dark mode" aria-label="Toggle theme">☀</button>
+      </div>
+    </nav>
+
+    <!-- Main view -->
+    <div id="view-main" class="app-main-content row">
+      <div class="video-container column column-large-7-12">
+        <div class="video-controls play-pause-container">
+          <div class="pause">
+            <svg xmlns:xlink="http://www.w3.org/1999/xlink" height="100%" version="1.1" viewBox="0 0 36 64">
+              <path fill="white" d="M 12,54 16,54 16,10 12,10 z M 21,54 25,54 25,10 21,10 z"/>
+            </svg>
+          </div>
+          <div class="play">
+            <svg xmlns:xlink="http://www.w3.org/1999/xlink" height="100%" version="1.1" viewBox="0 0 36 64">
+              <path fill="white" d="M 12,54 36,32 12,10 z"/>
+            </svg>
+          </div>
+        </div>
+        <button class="video-controls fullscreen">fullscreen</button>
+        <!-- Volume control: appears on hover, keyboard shortcut M -->
+        <div class="video-controls volume-control" title="Volume (M to mute)">
+          <button id="volume-icon" class="volume-icon" aria-label="Mute (M)">🔊</button>
+          <input type="range" id="volume-slider" class="volume-slider"
+                 min="0" max="1" step="0.05" value="1" aria-label="Volume" />
+        </div>
+        <video src="/stream" preload="metadata"></video>
+        <div class="video-progress" id="video-progress" role="progressbar" aria-label="Video progress">
+          <div class="video-progress-fill" id="video-progress-fill"></div>
+          <span class="video-progress-time" id="video-progress-time">0:00</span>
+        </div>
+        <p class="kbd-hints" id="kbd-hints">
+          <kbd>Space</kbd> play/pause &nbsp;
+          <kbd>F</kbd> fullscreen &nbsp;
+          <kbd>M</kbd> mute &nbsp;
+          <kbd>←</kbd><kbd>→</kbd> ±5 s seek
+        </p>
+      </div>
+
+      <div class="chat column column-large-5-12">
+        <div class="chat-box" id="chat-box">
+          <span class="motd" id="motd"></span>
+        </div>
+        <p id="typing-indicator" class="typing-indicator"></p>
+        <div class="chat-input">
+          <input id="chat-name-input" type="text" name="name" placeholder="Pick a name…" />
+          <input id="chat-msg-input" type="text" name="chat" placeholder="Type a message…" class="hidden" />
+          <button class="chat-button" id="chat-send-btn">send</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Admin panel (shown inline when admin is logged in) -->
+    <div id="view-admin" class="hidden admin-panel">
+      <h2>admin panel</h2>
+
+      <section class="admin-section">
+        <h3>settings</h3>
+        <div class="admin-section-body">
+        <form id="settings-form">
+          <fieldset>
+            <legend>media file</legend>
+            <input type="text" id="settings-media-file" name="media_file" list="media-files-list" autocomplete="off" />
+            <datalist id="media-files-list"></datalist>
+          </fieldset>
+          <fieldset>
+            <legend>message of the day</legend>
+            <textarea id="settings-motd" name="message-of-the-day" class="full-width" rows="2"></textarea>
+          </fieldset>
+          <div class="form-actions">
+            <button type="submit" class="button-alternative">
+              save <span class="arrow">❯</span>
+            </button>
+          </div>
+          <p id="settings-msg" class="form-feedback hidden"></p>
+        </form>
+        </div>
+      </section>
+
+      <section class="admin-section">
+        <h3>users</h3>
+        <div class="admin-section-body">
+        <table id="users-table" class="users-table">
+          <thead><tr><th>username</th><th>role</th><th>created</th><th></th></tr></thead>
+          <tbody id="users-tbody"></tbody>
+        </table>
+        <form id="add-user-form" class="add-user-form">
+          <fieldset>
+            <legend>new user</legend>
+            <input type="text" name="username" placeholder="username" required />
+            <input type="password" name="password" placeholder="password" required />
+            <select name="role">
+              <option value="user">user</option>
+              <option value="admin">admin</option>
+            </select>
+          </fieldset>
+          <div class="form-actions">
+            <button type="submit" class="button-alternative">
+              add user <span class="arrow">❯</span>
+            </button>
+          </div>
+          <p id="add-user-msg" class="form-feedback hidden"></p>
+        </form>
+        </div>
+      </section>
+
+      <section class="admin-section">
+        <h3>change password</h3>
+        <div class="admin-section-body">
+        <form id="change-password-form">
+          <fieldset>
+            <legend>current password</legend>
+            <input type="password" name="currentPassword" required />
+          </fieldset>
+          <fieldset>
+            <legend>new password</legend>
+            <input type="password" name="newPassword" required minlength="8" />
+          </fieldset>
+          <div class="form-actions">
+            <button type="submit" class="button-alternative">
+              update <span class="arrow">❯</span>
+            </button>
+          </div>
+          <p id="change-password-msg" class="form-feedback hidden"></p>
+        </form>
+        </div>
+      </section>
+    </div>
+
+    <!-- Info toast -->
+    <div id="info-toast" class="info-message-container hidden">
+      <span class="info-message" id="info-message-text"></span>
+      <button class="close-button" id="close-toast" aria-label="Close"></button>
+    </div>
+  </main>
+
+  <footer class="container container-medium-75vw">
+    <div class="footer-center">
+      <p>Unauthorised use under penalty of excommunication</p>
+      <pre id="server-time" class="timestamp"></pre>
+      <pre id="uptime" class="uptime"></pre>
+    </div>
+  </footer>
+
+  <img src="/footer.png" alt="" class="footer-img" />
+
+  <script type="module" src="/app.js"></script>
+  <script src="/funstuff.js" defer></script>
+
+  <!-- P2P DM panel (WebRTC – server only relays ICE/SDP, payloads are peer-to-peer) -->
+  <div id="dm-panel" class="dm-panel hidden" role="dialog" aria-label="Direct message">
+    <div class="dm-panel-header">
+      <span>💬 <strong id="dm-peer-name"></strong></span>
+      <button id="dm-close-btn" class="dm-close-btn" aria-label="Close DM">×</button>
+    </div>
+    <div id="dm-messages" class="dm-messages"></div>
+    <div class="dm-input-row">
+      <input id="dm-input" type="text" placeholder="Message…" autocomplete="off" />
+      <button id="dm-send-btn" class="chat-button">send</button>
+    </div>
+  </div>
+</body>
+</html>

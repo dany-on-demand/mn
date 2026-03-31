@@ -1,410 +1,777 @@
-@import 'https://fonts.googleapis.com/css?family=Space+Mono';
+@import 'https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700&family=Vollkorn:ital,wght@0,400;0,600&display=swap';
 
-body, html {
-    font-family: 'Space Mono', monospace;
-    letter-spacing: 1px;
-	font-size: 14px;
-    margin: 0;
-    box-sizing: border-box;
+/* ============================================================================
+   Movie Night — Cozy Brutalist (Windows 9x flavoured)
+   Dark by default. Light: html[data-theme="light"]
+   No border-radius, no drop-shadows, no blur, no gradients.
+   Raised / sunken via 2-colour solid border trick (Win9x style).
+   ============================================================================ */
+
+/* --- Dark theme (default) -------------------------------------------------- */
+:root {
+  --bg:       #1a1614;   /* warm near-black */
+  --surface:  #262018;   /* raised surface  */
+  --surface2: #302a22;   /* deeper widget   */
+  --hi:       #504840;   /* raised: top/left  */
+  --sh:       #0a0806;   /* raised: bot/right */
+  --accent:   #d4943c;   /* amber – projector warmth */
+  --text:     #e4d4b4;   /* warm parchment  */
+  --text-dim: #7a6e58;
+  --text-inv: #1a1614;   /* on accent bg    */
+  --danger:   #c43428;
+  --success:  #4a8a38;
+  --border:   #3a3228;
+  --f-ui:     'Space Mono', 'Courier New', monospace;
+  --f-hd:     'Vollkorn', Georgia, 'Times New Roman', serif;
 }
 
-*, *:before, *:after
-{
-    box-sizing: inherit;
+/* --- Light theme ----------------------------------------------------------- */
+html[data-theme="light"] {
+  --bg:       #c8bfb0;
+  --surface:  #d8d0c4;
+  --surface2: #e4ddd4;
+  --hi:       #f0ece4;
+  --sh:       #6a6058;
+  --accent:   #5a3010;
+  --text:     #1c1510;
+  --text-dim: #6a5e50;
+  --text-inv: #f0ece4;
+  --danger:   #901c10;
+  --success:  #2a5a20;
+  --border:   #aca09a;
 }
 
-img { max-width:100%;width: auto; }
+/* --- Reset ----------------------------------------------------------------- */
+*, *::before, *::after { box-sizing: border-box; }
 
-main, footer {
-    box-shadow: 0px 0px 10rem -3rem rgba(0,0,0,0.75);
-    padding: 1rem 2rem 0.5rem 2rem;
-    background: rgba(255,255,255,.9);
+html, body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--f-ui);
+  font-size: 14px;
+  min-height: 100vh;
 }
 
-main .app-main-content.row {
-    margin-top: 2em;
+img { max-width: 100%; width: auto; }
+
+/* --- Scrollbars (Win9x-style thick scrollbar) ------------------------------ */
+* { scrollbar-width: auto; scrollbar-color: var(--surface2) var(--surface); }
+::-webkit-scrollbar { width: 16px; height: 16px; }
+::-webkit-scrollbar-track { background: var(--surface); }
+::-webkit-scrollbar-thumb {
+  background: var(--surface2);
+  border-top: 2px solid var(--hi);
+  border-left: 2px solid var(--hi);
+  border-bottom: 2px solid var(--sh);
+  border-right: 2px solid var(--sh);
 }
 
+/* --- Utility --------------------------------------------------------------- */
+.hidden     { display: none !important; }
+.center     { text-align: center; }
+.full-width { width: 100% !important; }
+
+/* --- Win9x border helpers -------------------------------------------------- */
+/* Use on any element that should look raised off the page */
+.raised {
+  border-top: 2px solid var(--hi);
+  border-left: 2px solid var(--hi);
+  border-bottom: 2px solid var(--sh);
+  border-right: 2px solid var(--sh);
+}
+/* Use on any element that should look recessed */
+.sunken {
+  border-top: 2px solid var(--sh);
+  border-left: 2px solid var(--sh);
+  border-bottom: 2px solid var(--hi);
+  border-right: 2px solid var(--hi);
+}
+
+/* --- Buttons --------------------------------------------------------------- */
+button {
+  font-family: var(--f-ui);
+  font-size: 0.82rem;
+  background: var(--surface2);
+  color: var(--text);
+  cursor: pointer;
+  padding: 3px 10px 4px;
+  border-top: 2px solid var(--hi);
+  border-left: 2px solid var(--hi);
+  border-bottom: 2px solid var(--sh);
+  border-right: 2px solid var(--sh);
+}
+button:active {
+  border-top: 2px solid var(--sh);
+  border-left: 2px solid var(--sh);
+  border-bottom: 2px solid var(--hi);
+  border-right: 2px solid var(--hi);
+  padding: 4px 9px 3px 11px;
+}
+button:focus { outline: 1px dotted var(--text-dim); outline-offset: -3px; }
+
+/* Nav arrow buttons — keep the same win9x style, just with arrow span */
+.button-alternative {
+  font-family: var(--f-ui);
+  font-size: 0.82rem;
+  background: var(--surface2);
+  color: var(--text);
+  cursor: pointer;
+  padding: 3px 10px 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-top: 2px solid var(--hi);
+  border-left: 2px solid var(--hi);
+  border-bottom: 2px solid var(--sh);
+  border-right: 2px solid var(--sh);
+}
+.button-alternative:active {
+  border-top: 2px solid var(--sh);
+  border-left: 2px solid var(--sh);
+  border-bottom: 2px solid var(--hi);
+  border-right: 2px solid var(--hi);
+  padding: 4px 9px 3px 11px;
+}
+.button-alternative:focus { outline: 1px dotted var(--text-dim); outline-offset: -3px; }
+.button-alternative .arrow { font-size: 0.7em; }
+
+/* --- Form Inputs ----------------------------------------------------------- */
+input[type=text],
+input[type=password],
+textarea {
+  font-family: var(--f-ui);
+  font-size: 0.88rem;
+  background: var(--bg);
+  color: var(--text);
+  padding: 3px 5px;
+  border-top: 2px solid var(--sh);
+  border-left: 2px solid var(--sh);
+  border-bottom: 2px solid var(--hi);
+  border-right: 2px solid var(--hi);
+}
+input[type=text]:focus,
+input[type=password]:focus,
+textarea:focus { outline: 1px dotted var(--text-dim); outline-offset: 1px; }
+input::placeholder { color: var(--text-dim); }
+
+select {
+  font-family: var(--f-ui);
+  font-size: 0.88rem;
+  background: var(--surface2);
+  color: var(--text);
+  padding: 3px 5px;
+  cursor: pointer;
+  border-top: 2px solid var(--sh);
+  border-left: 2px solid var(--sh);
+  border-bottom: 2px solid var(--hi);
+  border-right: 2px solid var(--hi);
+}
+
+/* --- Dead Simple Grid (c) 2015 Vladimir Agafonkin -------------------------  */
+.row .row   { margin: 0 -1.5em; }
+.column     { padding: 0 1.5em; }
+.row::after { content: ""; clear: both; display: table; }
+@media only screen { .column { float: left; width: 100%; } }
+
+.container { margin: 0 auto; max-width: 1060px; padding: 1em; }
+
+@media only screen and (min-width: 34em) { .column-mobile-1-2  { width: 50%; } }
+@media only screen and (min-width: 54em) {
+  .container-medium-75vw { max-width: 78vw; }
+  .column-medium-2-3     { width: 66.66%; }
+  .column-medium-1-3     { width: 33.33%; }
+}
+@media only screen and (min-width: 76em) {
+  .column-large-5-12 { width: 41.66%; }
+  .column-large-7-12 { width: 58.33%; }
+}
+
+/* --- Navbar ---------------------------------------------------------------- */
+.navbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 0;
+  border-bottom: 2px solid var(--border);
+  margin-bottom: 1.25rem;
+  gap: 1rem;
+}
+.navbar .banner { max-height: 48px; width: auto; }
+.nav-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+.nav-user {
+  font-family: var(--f-ui);
+  font-size: 0.8rem;
+  color: var(--accent);
+  font-weight: bold;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+/* --- WS status dot --------------------------------------------------------- */
+.ws-dot {
+  display: inline-block;
+  width: 8px; height: 8px;
+  background: var(--text-dim);
+  border-top: 1px solid var(--sh);
+  border-left: 1px solid var(--sh);
+  border-bottom: 1px solid var(--hi);
+  border-right: 1px solid var(--hi);
+  flex-shrink: 0;
+}
+.ws-dot--online     { background: var(--success); }
+.ws-dot--offline    { background: var(--danger); }
+.ws-dot--connecting { background: var(--accent); animation: blink 1.2s step-end infinite; }
+
+@keyframes blink { 50% { opacity: 0.2; } }
+
+/* --- Online count ---------------------------------------------------------- */
+.online-count {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  cursor: default;
+}
+
+/* --- Video container (Win9x sunken frame) ---------------------------------- */
+.video-container {
+  position: relative;
+  background: #000;
+  border-top: 2px solid var(--sh);
+  border-left: 2px solid var(--sh);
+  border-bottom: 2px solid var(--hi);
+  border-right: 2px solid var(--hi);
+}
+
+video {
+  width: 100%;
+  height: 400px;
+  display: block;
+  object-fit: contain;
+  background: #000;
+}
+video::-webkit-media-controls { display: none !important; }
+
+/* Play / pause flash overlay */
+.video-controls { position: absolute; z-index: 17; }
+
+.play-pause-container {
+  left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  width: 56px; height: 56px;
+  background: var(--surface2);
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-top: 2px solid var(--hi);
+  border-left: 2px solid var(--hi);
+  border-bottom: 2px solid var(--sh);
+  border-right: 2px solid var(--sh);
+}
+.play, .pause {
+  width: 24px; height: 24px;
+  display: flex; align-items: center; justify-content: center;
+}
+.pause { display: none; }
+
+/* Fullscreen button */
+button.fullscreen {
+  right: 4px;
+  bottom: 44px;
+  background: var(--surface2);
+  color: var(--text);
+  font-size: 0.72rem;
+  padding: 2px 7px 3px;
+  display: none;
+  font-family: var(--f-ui);
+}
+.video-container:hover button.video-controls.fullscreen { display: initial; }
+
+/* --- Volume control ------------------------------------------------------- */
+.volume-control {
+  bottom: 38px; right: 4px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--surface2);
+  padding: 3px 7px;
+  opacity: 0;
+  pointer-events: none;
+  border-top: 2px solid var(--hi);
+  border-left: 2px solid var(--hi);
+  border-bottom: 2px solid var(--sh);
+  border-right: 2px solid var(--sh);
+}
+.video-container:hover .volume-control { opacity: 1; pointer-events: auto; }
+
+.volume-icon {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 0.9rem;
+  cursor: pointer;
+  color: var(--text);
+  line-height: 1;
+}
+.volume-icon:active { transform: none; }
+
+.volume-slider {
+  width: 60px;
+  cursor: pointer;
+  accent-color: var(--accent);
+  vertical-align: middle;
+}
+
+/* --- Video progress bar --------------------------------------------------- */
+.video-progress {
+  position: relative;
+  height: 8px;
+  background: var(--bg);
+  cursor: default;
+  border-top: 2px solid var(--sh);
+  border-left: 2px solid var(--sh);
+  border-bottom: 2px solid var(--hi);
+  border-right: 2px solid var(--hi);
+  overflow: hidden;
+}
+.video-progress.admin-seekable { cursor: pointer; height: 10px; }
+
+.video-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  width: 0%;
+}
+
+.video-progress-time {
+  position: absolute;
+  right: 4px;
+  bottom: calc(100% + 2px);
+  font-size: 0.65rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+  font-family: var(--f-ui);
+  pointer-events: none;
+}
+
+/* --- Keyboard hints ------------------------------------------------------- */
+.kbd-hints {
+  font-size: 0.65rem;
+  color: var(--text-dim);
+  margin-top: 4px;
+  display: none;
+}
+kbd {
+  display: inline-block;
+  border-top: 2px solid var(--hi);
+  border-left: 2px solid var(--hi);
+  border-bottom: 2px solid var(--sh);
+  border-right: 2px solid var(--sh);
+  padding: 0 4px;
+  font-size: 0.82em;
+  background: var(--surface2);
+  color: var(--text);
+  font-family: var(--f-ui);
+}
+
+/* --- Chat (Win9x "IRC window" look) --------------------------------------- */
 .chat {
-    position: relative;
-    height: 400px;
-    word-wrap: break-word;
-    overflow: scroll;
+  height: 400px;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-top: 2px solid var(--sh);
+  border-left: 2px solid var(--sh);
+  border-bottom: 2px solid var(--hi);
+  border-right: 2px solid var(--hi);
 }
 
 .chat-box {
-    word-wrap: break-word;
-    overflow: scroll;
-    height: calc( 100% - 2.166rem );
+  flex: 1;
+  overflow-y: auto;
+  padding: 5px 7px;
+  word-break: break-word;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
 }
 
 .chat-input {
-    position: absolute;
-    width: 100%;
-    bottom: 0;
+  display: flex;
+  background: var(--surface);
+  padding: 4px;
+  gap: 4px;
 }
-
 .chat-input input {
-    width: 75%;
+  flex: 1;
+  background: var(--bg);
+  color: var(--text);
+}
+.chat-input button { flex-shrink: 0; }
+
+/* Typing indicator */
+.typing-indicator {
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  font-style: italic;
+  min-height: 1.1rem;
+  padding: 2px 7px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  margin: 0;
 }
 
-.chat-input button {
-    width: 25%;
-}
-
-
-button {
-    font-family: inherit;
-    border: 2px solid #00C5CD;
-    color: #00C5CD;
-    background: #222;
-    font-weight: bold;
-    padding: 0.2rem .5rem;
-    cursor: pointer;
-}
-
-button:focus { outline:0 !important; }
-
-.button-alternative {
-    font-family: inherit;
-    border: 0;
-    padding: 0 0 0 1em;
-    color: white;
-}
-
-.button-alternative .arrow {
-    display: inline-block;
-    line-height: 2.5rem;
-    background: #333;
-    color: white;
-    width: 2.5rem;
-    -webkit-transition: margin 200ms;
-    transition: margin 200ms;
-    margin-left: .75rem;
-}
-.button-alternative:hover {
-    background: white;
-    border-left: 2px solid #262626;
-    color: #222;
-}
-.button-alternative:hover .arrow {
-    margin-left: 1.25em;
-    background-color: #262626;
-}
-.button-alternative:active {
-    background: #ccc;
-}
-.button-alternative:active .arrow {
-    margin-left: 1.5em;
-}
-
-input:focus, textarea:focus {
-    outline: 0;
-}
-
-input[type=text], textarea {
-    font-family: inherit;
-    font-size: 1.2rem;
-    border: 0;
-    border-bottom: 2px solid black;
-}
-
-.info-message-container {
-    width: calc( 100% - 2rem );
-    background: #00FF34;
-    height: 72px;
-    display: inline-block;
-    padding: 1rem;
-    font-weight: bold;
-    font-size: 2rem;
-    margin: 1rem 0 0 1rem;
-    display: none;
-}
-
-button.close-button {
-    float: right;
-    height: 20px;
-    width: 20px;
-    border: 0;
-    color: white;
-    position: relative;
-    top: calc( 50% - 10px);
-}
-
-button.close-button::before {
-    content: "x";
-    display: block;
-    font-size: 0.9rem;
-    position: absolute;
-    top: 0;
-    left: calc( 50% - 0.5ch );
-}
-
-/*  dynamic elements  */
-
+/* --- Chat messages -------------------------------------------------------- */
 .chat-message {
-    font-family: monospace;
+  font-size: 0.82rem;
+  padding: 1px 0;
+  line-height: 1.5;
+  font-family: var(--f-ui);
 }
 
 .chat-message-owner {
-    background: black;
-    color: white;
-    text-shadow: 0 0 2px white;
+  background: var(--surface2);
+  color: var(--accent);
+  padding: 0 4px;
+  font-size: 0.76rem;
+  font-weight: bold;
+  border-top: 1px solid var(--hi);
+  border-left: 1px solid var(--hi);
+  border-bottom: 1px solid var(--sh);
+  border-right: 1px solid var(--sh);
 }
-.chat-message-owner::after {
-    content: ":"
+.chat-message-owner::after { content: ":"; }
+
+.chat-message-owner--dm { cursor: pointer; text-decoration: underline; }
+.chat-message-owner--dm:hover { background: var(--accent); color: var(--text-inv); }
+
+.chat-message-time {
+  font-size: 0.62rem;
+  color: var(--text-dim);
+  margin-left: 0.4em;
+  opacity: 0;
+  pointer-events: none;
+}
+.chat-message:hover .chat-message-time { opacity: 1; }
+
+/* MOTD banner — like a system message */
+.motd {
+  display: block;
+  font-size: 0.78rem;
+  color: var(--accent);
+  padding: 3px 6px;
+  border-left: 3px solid var(--accent);
+  margin-bottom: 6px;
+  font-style: italic;
+  background: var(--surface);
 }
 
-footer pre {
-    opacity: 0;
-    font-size: .8rem;
-    text-align: center;
+/* --- Modal (Win9x dialog box) --------------------------------------------- */
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+.modal-box {
+  background: var(--surface);
+  min-width: 340px;
+  border-top: 2px solid var(--hi);
+  border-left: 2px solid var(--hi);
+  border-bottom: 2px solid var(--sh);
+  border-right: 2px solid var(--sh);
+  padding: 0;
+}
+/* Win9x title bar */
+.modal-titlebar {
+  background: var(--accent);
+  color: var(--text-inv);
+  font-family: var(--f-ui);
+  font-weight: bold;
+  font-size: 0.82rem;
+  padding: 3px 7px;
+  user-select: none;
+}
+.modal-body { padding: 14px 16px 16px; }
+
+.modal-box h2 {
+  font-family: var(--f-hd);
+  font-size: 1.1rem;
+  margin: 0 0 1rem;
+  color: var(--text);
+}
+.modal-box fieldset {
+  border: 1px solid var(--border);
+  padding: 4px 8px 6px;
+  margin: 0 0 8px;
+}
+.modal-box legend {
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  padding: 0 4px;
+  font-family: var(--f-ui);
+}
+.modal-box input { width: 100%; }
+
+.form-actions { margin-top: 10px; }
+.form-error { color: var(--danger); font-size: 0.8rem; margin-top: 5px; }
+.form-feedback { margin-top: 5px; font-size: 0.8rem; }
+.form-feedback.success { color: var(--success); }
+.form-feedback.error   { color: var(--danger); }
+
+/* --- Admin Panel (Win9x window style) ------------------------------------- */
+.admin-panel { padding: 0 0 2rem; }
+
+.admin-panel > h2 {
+  font-family: var(--f-hd);
+  font-size: 1.3rem;
+  color: var(--text);
+  margin: 0 0 1rem;
+  padding-bottom: 6px;
+  border-bottom: 2px solid var(--border);
 }
 
-footer:hover pre{
-    opacity: 1;
+.admin-section {
+  margin-bottom: 1.2rem;
+  border-top: 2px solid var(--hi);
+  border-left: 2px solid var(--hi);
+  border-bottom: 2px solid var(--sh);
+  border-right: 2px solid var(--sh);
+  background: var(--surface);
+}
+/* Win9x title bar on each section */
+.admin-section h3 {
+  margin: 0;
+  padding: 3px 8px;
+  background: var(--accent);
+  color: var(--text-inv);
+  font-family: var(--f-ui);
+  font-size: 0.78rem;
+  font-weight: bold;
+  letter-spacing: 0.5px;
+  text-transform: none;
+}
+.admin-section-body { padding: 10px 12px 12px; }
+
+.admin-section fieldset {
+  border: 1px solid var(--border);
+  padding: 4px 8px 6px;
+  margin: 0 0 8px;
+}
+.admin-section legend {
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  padding: 0 4px;
+}
+.admin-section input[type=text],
+.admin-section input[type=password],
+.admin-section textarea,
+.admin-section select { width: 100%; }
+.admin-section textarea { resize: vertical; }
+
+/* Users table */
+.users-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 10px;
+  font-size: 0.82rem;
+}
+.users-table th,
+.users-table td {
+  text-align: left;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.users-table th {
+  background: var(--surface2);
+  color: var(--text-dim);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  border-bottom: 2px solid var(--border);
+}
+.users-table tr:hover td { background: var(--surface2); }
+
+.btn-delete {
+  font-size: 0.72rem;
+  padding: 1px 5px 2px;
+  color: var(--danger);
+  border-top: 2px solid var(--hi);
+  border-left: 2px solid var(--hi);
+  border-bottom: 2px solid var(--sh);
+  border-right: 2px solid var(--sh);
+  background: var(--surface2);
 }
 
+/* Add-user form inline */
+.add-user-form fieldset {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+.add-user-form input,
+.add-user-form select { flex: 1; min-width: 110px; }
+
+/* --- Toast ----------------------------------------------------------------- */
+.info-message-container {
+  position: fixed;
+  bottom: 1.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--surface2);
+  color: var(--text);
+  padding: 7px 14px;
+  font-size: 0.82rem;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  z-index: 200;
+  max-width: 480px;
+  width: max-content;
+  border-top: 2px solid var(--hi);
+  border-left: 2px solid var(--hi);
+  border-bottom: 2px solid var(--sh);
+  border-right: 2px solid var(--sh);
+}
+
+button.close-button {
+  background: var(--surface2);
+  color: var(--text);
+  font-size: 0.9rem;
+  cursor: pointer;
+  padding: 1px 6px 2px;
+  flex-shrink: 0;
+  border-top: 2px solid var(--hi);
+  border-left: 2px solid var(--hi);
+  border-bottom: 2px solid var(--sh);
+  border-right: 2px solid var(--sh);
+  font-family: var(--f-ui);
+  font-weight: bold;
+}
+button.close-button:active {
+  border-top: 2px solid var(--sh);
+  border-left: 2px solid var(--sh);
+  border-bottom: 2px solid var(--hi);
+  border-right: 2px solid var(--hi);
+  padding: 2px 5px 1px 7px;
+}
+button.close-button::before { content: "×"; display: block; }
+
+/* --- Background canvas ----------------------------------------------------- */
 .background-funstuff {
-    position: absolute;
-    z-index: -1;
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0.15;
 }
 
-/* video */
-.video-container {
-    position: relative;
+/* --- Footer ---------------------------------------------------------------- */
+footer {
+  text-align: center;
+  padding: 6px 0 0;
+  color: var(--text-dim);
+  font-size: 0.68rem;
+  border-top: 2px solid var(--border);
+  margin-top: 1rem;
+}
+footer pre {
+  color: var(--text-dim);
+  font-size: 0.68rem;
+  opacity: 0;
+  margin: 0;
+}
+footer:hover pre { opacity: 1; }
+.footer-img { display: block; margin: 0 auto; max-width: 1060px; width: 100%; opacity: 0.6; }
+.footer-center { text-align: center; }
+
+/* --- DM Panel (Win9x floating window) ------------------------------------- */
+.dm-panel {
+  position: fixed;
+  bottom: 1.5rem; right: 1.5rem;
+  width: 320px; max-height: 420px;
+  background: var(--surface);
+  display: flex; flex-direction: column;
+  z-index: 300;
+  font-size: 0.88rem;
+  border-top: 2px solid var(--hi);
+  border-left: 2px solid var(--hi);
+  border-bottom: 2px solid var(--sh);
+  border-right: 2px solid var(--sh);
+}
+.dm-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 3px 7px;
+  background: var(--accent);
+  color: var(--text-inv);
+  font-weight: bold;
+  font-size: 0.8rem;
+  user-select: none;
+}
+.dm-close-btn {
+  background: var(--surface2);
+  color: var(--text);
+  font-size: 0.9rem;
+  cursor: pointer;
+  padding: 0 5px;
+  line-height: 1.4;
+  border-top: 2px solid var(--hi);
+  border-left: 2px solid var(--hi);
+  border-bottom: 2px solid var(--sh);
+  border-right: 2px solid var(--sh);
+  font-family: var(--f-ui);
+  font-weight: bold;
+}
+.dm-close-btn:active {
+  border-top: 2px solid var(--sh);
+  border-left: 2px solid var(--sh);
+  border-bottom: 2px solid var(--hi);
+  border-right: 2px solid var(--hi);
 }
 
+.dm-messages {
+  flex: 1; overflow-y: auto;
+  padding: 5px 7px;
+  min-height: 120px;
+  background: var(--bg);
+}
+.dm-message { margin: 2px 0; font-size: 0.8rem; word-break: break-word; }
+.dm-message--mine .chat-message-owner { background: var(--accent); color: var(--text-inv); }
 
-video {
-    width: 100%;
-    height: 100%;
-    height: 400px;
-    -webkit-filter: drop-shadow(0 0 0.7rem rgba(22,22,22, 0.4));
-    filter: drop-shadow(0 0 0.7rem rgba(22,22,22, 0.4));
+.dm-input-row { display: flex; border-top: 1px solid var(--border); gap: 4px; padding: 4px; background: var(--surface); }
+.dm-input-row input { flex: 1; background: var(--bg); }
+.dm-input-row .chat-button { flex-shrink: 0; }
+
+@media only screen and (max-width: 420px) {
+  .dm-panel { width: calc(100vw - 2rem); right: 1rem; }
 }
 
-/* disable fullscreen controls */
-video::-webkit-media-controls {
-  display:none !important;
-}
-
-.video-controls {
-    position: absolute;
-    z-index: 17;
-}
-
-.play-pause-container {
-    left: calc( 50% - 16px );
-    top: 50%;
-    width: 72px;
-    height: 72px;
-    margin-left: -26px;
-    margin-top: -26px;
-    background: rgba(0,0,0,.5);
-    border-radius: 100%;
-    pointer-events: none;
-}
-
-.play, .pause {
-    width: 36px;
-    height: 64px;
-    margin: 6px 8px 8px 17px;
-}
-
-.pause {
-    display: none;
-}
-
-button.fullscreen {
-    left: 30%;
-    width: 40%;
-    bottom: 0;
-    font-weight: 100;
-    background: white;
-    border: 0;
-    color: black;
-    font-size: 1.5rem;
-    display: none;
-}
-
-.video-container:hover button.video-controls.fullscreen {
-    display: initial;
-}
-
-/* @Todo: move imports somewhere else */ 
-/* Dead Simple Grid (c) 2015 Vladimir Agafonkin */
-
-.row .row { margin:  0 -1.5em; }
-.column      { padding: 0  1.5em; }
-
-.row:after {
-    content: "";
-    clear: both;
-    display: table;
-}
-
-@media only screen { .column {
-    float: left;
-    width: 100%;
-}}
-
-/* Grid setup */ 
-
-.container{
-    margin: 0 auto;
-    max-width: 960px;
-    padding: 1em 0;
-}
-
-@media only screen and (min-width: 34em) {
-    .column-mobile-1-2 { width: 50%; }
-}
-
-@media only screen and (min-width: 54em) {
-    .container-medium-75vw { width: 75vw; }
-    .column-medium-2-3 { width: 66.66%; }
-    .column-medium-1-3 { width: 33.33%; }
-}
-
-@media only screen and (min-width: 76em) {
-    .column-large-5-12 { width: 41.66%; }
-    .column-large-7-12 { width: 58.33%; }
-}
-
-.center {
-    text-align: center;
-}
-
-.full-width {
-    width: 100% !important;
-}
-
-
-/* Animations */
-
-@-webkit-keyframes bounceIn {
-  from, 20%, 40%, 60%, 80%, to {
-    -webkit-animation-timing-function: cubic-bezier(0.215, 0.610, 0.355, 1.000);
-    animation-timing-function: cubic-bezier(0.215, 0.610, 0.355, 1.000);
-  }
-
-  0% {
-    opacity: 0;
-    -webkit-transform: scale3d(.3, .3, .3);
-    transform: scale3d(.3, .3, .3);
-  }
-
-  20% {
-    -webkit-transform: scale3d(1.1, 1.1, 1.1);
-    transform: scale3d(1.1, 1.1, 1.1);
-  }
-
-  40% {
-    -webkit-transform: scale3d(.9, .9, .9);
-    transform: scale3d(.9, .9, .9);
-  }
-
-  60% {
-    opacity: 1;
-    -webkit-transform: scale3d(1.03, 1.03, 1.03);
-    transform: scale3d(1.03, 1.03, 1.03);
-  }
-
-  80% {
-    -webkit-transform: scale3d(.97, .97, .97);
-    transform: scale3d(.97, .97, .97);
-  }
-
-  to {
-    opacity: 1;
-    -webkit-transform: scale3d(1, 1, 1);
-    transform: scale3d(1, 1, 1);
-  }
-}
-
+/* --- Animations ------------------------------------------------------------ */
 @keyframes bounceIn {
-  from, 20%, 40%, 60%, 80%, to {
-    -webkit-animation-timing-function: cubic-bezier(0.215, 0.610, 0.355, 1.000);
-    animation-timing-function: cubic-bezier(0.215, 0.610, 0.355, 1.000);
-  }
-
-  0% {
-    opacity: 0;
-    -webkit-transform: scale3d(.3, .3, .3);
-    transform: scale3d(.3, .3, .3);
-  }
-
-  20% {
-    -webkit-transform: scale3d(1.1, 1.1, 1.1);
-    transform: scale3d(1.1, 1.1, 1.1);
-  }
-
-  40% {
-    -webkit-transform: scale3d(.9, .9, .9);
-    transform: scale3d(.9, .9, .9);
-  }
-
-  60% {
-    opacity: 1;
-    -webkit-transform: scale3d(1.03, 1.03, 1.03);
-    transform: scale3d(1.03, 1.03, 1.03);
-  }
-
-  80% {
-    -webkit-transform: scale3d(.97, .97, .97);
-    transform: scale3d(.97, .97, .97);
-  }
-
-  to {
-    opacity: 1;
-    -webkit-transform: scale3d(1, 1, 1);
-    transform: scale3d(1, 1, 1);
-  }
+  0%   { opacity: 0; transform: scale(0.5); }
+  60%  { opacity: 1; transform: scale(1.05); }
+  100% { opacity: 1; transform: scale(1); }
 }
-
-.bounceIn {
-  -webkit-animation-name: bounceIn;
-  animation-name: bounceIn;
-}
-
-@-webkit-keyframes zoomIn {
-  from {
-    opacity: 1;
-  }
-
-  100% {
-    opacity: 0;
-    -webkit-transform: scale3d(1.3, 1.3, 1.3);
-    transform: scale3d(1.3, 1.3, 1.3);
-  }
-}
-
 @keyframes zoomIn {
-  from {
-    opacity: 1;
-  }
-
-  100% {
-    opacity: 0;
-    -webkit-transform: scale3d(1.3, 1.3, 1.3);
-    transform: scale3d(1.3, 1.3, 1.3);
-  }
+  from { opacity: 1; }
+  100% { opacity: 0; transform: scale(1.25); }
 }
 
-.zoomIn {
-  -webkit-animation-name: zoomIn;
-  animation-name: zoomIn;
-}
+.bounceIn { animation-name: bounceIn; }
+.zoomIn   { animation-name: zoomIn; }
 
-.animated {
-  -webkit-animation-duration: 1s;
-  animation-duration: 1s;
-  -webkit-animation-fill-mode: both;
-  animation-fill-mode: both;
-}
+.animated { animation-duration: 0.45s; animation-fill-mode: both; }
+.animated.infinite { animation-iteration-count: infinite; }
 
-.animated.infinite {
-  -webkit-animation-iteration-count: infinite;
-  animation-iteration-count: infinite;
+/* --- Responsive ------------------------------------------------------------- */
+@media only screen and (max-width: 54em) {
+  .app-main-content.row > .column { float: none; width: 100%; }
+  .chat { height: 280px; margin-top: 1rem; }
+  video { height: 240px; }
 }

@@ -1,5 +1,9 @@
 node_modules/
 sessions/
 media/*
-!.gitkeep
+!media/.gitkeep
+!media/test.mp4
+data/*
+!data/.gitkeep
+.env
 .vscode/

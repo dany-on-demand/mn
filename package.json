@@ -1,8 +1,13 @@
 {
   "name": "mn",
-  "version": "1.0.0",
-  "description": "",
-  "main": "server.js",
+  "version": "2.0.0",
+  "description": "Movie Night – synchronized video watching with chat",
+  "type": "module",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs",
+    "dev": "node --watch server.mjs"
+  },
   "author": "dany-on-demand",
   "repository": {
     "type": "git",
@@ -10,22 +15,13 @@
   },
   "license": "MIT",
   "dependencies": {
-    "body-parser": "^1.15.2",
-    "compression": "^1.6.2",
-    "express": "^4.14.0",
-    "express-session": "^1.14.0",
-    "send": "^0.14.1",
-    "slm": "^1.0.0",
-    "uuid": "^2.0.2",
-    "ws": "^1.1.2"
-  },
-  "devDependencies": {
-    "session-file-store": "^0.2.0"
-  },
-  "optionalDependencies": {
-    "bufferutil": "^1.3.0"
+    "@fastify/static": "^9.0.0",
+    "@fastify/websocket": "^11.2.0",
+    "better-sqlite3": "^11.10.0",
+    "fastify": "^5.8.4",
+    "send": "^1.2.1"
   },
   "engines": {
-    "node": ">=22.16.0"
+    "node": ">=24.0.0"
   }
 }

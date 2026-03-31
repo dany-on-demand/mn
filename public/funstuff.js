@@ -27,7 +27,6 @@ var Line = function (x1, y1, x2, y2) {
 };
 
 Line.prototype.display = function () {
-    context.strokeStyle = 'rgba(0, 200, 212, 0.55)';
     context.lineWidth = 1;
     context.beginPath();
     context.moveTo(this.a.x, this.a.y);
@@ -147,7 +146,9 @@ function init_funstuff() {
     context = canvas.getContext('2d')
     margin = 0
 
-    canvas.style.backgroundColor = '#09090f'
+    const isDark = document.documentElement.dataset.theme !== 'light'
+    canvas.style.backgroundColor = isDark ? '#1a1614' : '#c8bfb0'
+    context.strokeStyle = isDark ? 'rgba(212, 148, 60, 0.4)' : 'rgba(90, 48, 16, 0.25)'
 
     w = canvas.width = window.innerWidth;
     h = canvas.height = Math.max((document.height !== undefined) ? document.height : document.body.offsetHeight, window.innerHeight);

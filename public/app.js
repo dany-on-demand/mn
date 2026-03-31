@@ -844,6 +844,24 @@ $('#change-password-form')?.addEventListener('submit', async (e) => {
 })
 
 // ---------------------------------------------------------------------------
+// Theme toggle (☀ / 🌙) — persisted in localStorage, flash-free restore
+// in index.html <head> inline script.
+// ---------------------------------------------------------------------------
+;(function initTheme() {
+  const btn  = $('#btn-theme')
+  if (!btn) return
+  const html = document.documentElement
+  const sync = () => { btn.textContent = html.dataset.theme === 'light' ? '🌙' : '☀' }
+  sync()
+  btn.addEventListener('click', () => {
+    const next = html.dataset.theme === 'light' ? 'dark' : 'light'
+    html.dataset.theme = next
+    localStorage.setItem('mn-theme', next)
+    sync()
+  })
+})()
+
+// ---------------------------------------------------------------------------
 // Utility
 // ---------------------------------------------------------------------------
 // Single-pass lookup-table escape — one regex, one allocation, no chained replaces.

@@ -6,30 +6,34 @@
   <title>movie night</title>
   <link rel="icon" href="/icon.ico" />
   <link rel="stylesheet" href="/app.css" />
+  <!-- Restore saved theme before first paint (prevents flash) -->
+  <script>(function(){var t=localStorage.getItem('mn-theme');if(t)document.documentElement.dataset.theme=t;})()</script>
 </head>
 <body>
   <canvas class="background-funstuff"></canvas>
 
-  <!-- Login modal -->
+  <!-- Login modal (Win9x dialog style) -->
   <div id="login-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="login-title">
     <div class="modal-box">
-      <h2 id="login-title">login</h2>
-      <form id="login-form" autocomplete="on">
-        <fieldset>
-          <legend>username</legend>
-          <input type="text" id="login-username" name="username" autocomplete="username" required />
-        </fieldset>
-        <fieldset>
-          <legend>password</legend>
-          <input type="password" id="login-password" name="password" autocomplete="current-password" required />
-        </fieldset>
-        <p id="login-error" class="form-error hidden"></p>
-        <div class="form-actions">
-          <button type="submit" class="button-alternative">
-            login <span class="arrow">❯</span>
-          </button>
-        </div>
-      </form>
+      <div class="modal-titlebar" id="login-title">🎬 movie night — login</div>
+      <div class="modal-body">
+        <form id="login-form" autocomplete="on">
+          <fieldset>
+            <legend>username</legend>
+            <input type="text" id="login-username" name="username" autocomplete="username" required />
+          </fieldset>
+          <fieldset>
+            <legend>password</legend>
+            <input type="password" id="login-password" name="password" autocomplete="current-password" required />
+          </fieldset>
+          <p id="login-error" class="form-error hidden"></p>
+          <div class="form-actions">
+            <button type="submit" class="button-alternative">
+              login <span class="arrow">❯</span>
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   </div>
 
@@ -44,6 +48,7 @@
         <span id="nav-user" class="nav-user hidden"></span>
         <button id="btn-admin" class="button-alternative hidden">admin <span class="arrow">❯</span></button>
         <button id="btn-logout" class="button-alternative hidden">logout <span class="arrow">❯</span></button>
+        <button id="btn-theme" title="Toggle light/dark mode" aria-label="Toggle theme">☀</button>
       </div>
     </nav>
 
@@ -101,6 +106,7 @@
 
       <section class="admin-section">
         <h3>settings</h3>
+        <div class="admin-section-body">
         <form id="settings-form">
           <fieldset>
             <legend>media file</legend>
@@ -118,10 +124,12 @@
           </div>
           <p id="settings-msg" class="form-feedback hidden"></p>
         </form>
+        </div>
       </section>
 
       <section class="admin-section">
         <h3>users</h3>
+        <div class="admin-section-body">
         <table id="users-table" class="users-table">
           <thead><tr><th>username</th><th>role</th><th>created</th><th></th></tr></thead>
           <tbody id="users-tbody"></tbody>
@@ -143,10 +151,12 @@
           </div>
           <p id="add-user-msg" class="form-feedback hidden"></p>
         </form>
+        </div>
       </section>
 
       <section class="admin-section">
         <h3>change password</h3>
+        <div class="admin-section-body">
         <form id="change-password-form">
           <fieldset>
             <legend>current password</legend>
@@ -163,6 +173,7 @@
           </div>
           <p id="change-password-msg" class="form-feedback hidden"></p>
         </form>
+        </div>
       </section>
     </div>
 
